@@ -1,7 +1,8 @@
-package org.rationalityfrontline.ktrader.broker.ctp;
+package org.rationalityfrontline.ktrader.broker.ctp
 
-import org.pf4j.Plugin;
-import org.pf4j.PluginWrapper;
+import org.pf4j.Plugin
+import org.pf4j.PluginWrapper
+import org.rationalityfrontline.jctp.jctpJNI
 
 class CtpBrokerPlugin(wrapper: PluginWrapper) : Plugin(wrapper) {
     override fun start() {
@@ -14,5 +15,6 @@ class CtpBrokerPlugin(wrapper: PluginWrapper) : Plugin(wrapper) {
 
     override fun delete() {
         println("CtpBrokerPlugin delete")
+        jctpJNI.release()
     }
 }

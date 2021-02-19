@@ -16,8 +16,8 @@ val GITHUB_REPO = "RationalityFrontline/ktrader-broker-ctp"
 
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = "broker-ctp-rf"
-val pluginVersion = "0.1.0-SNAPSHOT"
-val pluginRequires = "0.1.1-SNAPSHOT"
+val pluginVersion = "0.1.2-SNAPSHOT"
+val pluginRequires = "0.1.0"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"
@@ -32,7 +32,7 @@ dependencies {
     compileOnly(kotlin("stdlib"))
     compileOnly("org.rationalityfrontline.ktrader:ktrader-broker-api:0.1.1-SNAPSHOT")
     kapt("org.pf4j:pf4j:3.4.1")
-    implementation("org.rationalityfrontline:jctp:6.3.19-1.0.0")
+    implementation("org.rationalityfrontline:jctp:6.3.19-1.0.1")
     testImplementation(platform("org.junit:junit-bom:5.7.0"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.7.0")
 }
