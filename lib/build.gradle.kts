@@ -1,3 +1,5 @@
+import org.gradle.kotlin.dsl.support.zipTo
+
 plugins {
     kotlin("jvm") version "1.4.20"
     kotlin("kapt") version "1.4.20"
@@ -9,7 +11,7 @@ plugins {
 }
 
 group = "org.rationalityfrontline.ktrader"
-version = "0.1.2-SNAPSHOT"
+version = "0.1.3-SNAPSHOT"
 val NAME = "ktrader-broker-ctp"
 val DESC = "CTP implementation of KTrader-Broker-API"
 val GITHUB_REPO = "RationalityFrontline/ktrader-broker-ctp"
@@ -28,10 +30,14 @@ repositories {
     jcenter()
 }
 
+configurations.create("mrjar9")
+
 dependencies {
+    val pf4jVersion = "3.4.1"
     compileOnly(kotlin("stdlib"))
     compileOnly("org.rationalityfrontline.ktrader:ktrader-broker-api:0.1.1-SNAPSHOT")
-    kapt("org.pf4j:pf4j:3.4.1")
+    kapt("org.pf4j:pf4j:$pf4jVersion")
+    add("mrjar9", "org.pf4j:pf4j:$pf4jVersion")
     implementation("org.rationalityfrontline:jctp:6.3.19-1.0.1")
     testImplementation(platform("org.junit:junit-bom:5.7.0"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.7.0")
@@ -51,6 +57,28 @@ tasks {
             option("--module-path", compileJava.get().classpath.asPath)
         }
     }
+    register("moveModuleInfoInMRJARs") {
+        configurations["mrjar9"].files.forEach { mrjar9Jar ->
+            val tree = zipTree(mrjar9Jar)
+            val moduleInfoFile = tree.matching { include("module-info.class") }
+            val v9ModuleInfoFile = tree.matching { include("META-INF/versions/9/module-info.class") }
+            if (moduleInfoFile.isEmpty && !v9ModuleInfoFile.isEmpty) {
+                val unzipDir = file("$buildDir/tmp/mrjar9")
+                delete(unzipDir)
+                mkdir(unzipDir)
+                copy {
+                    from(tree, v9ModuleInfoFile.singleFile)
+                    into(unzipDir)
+                }
+                zipTo(mrjar9Jar, unzipDir)
+                println("Fixed $mrjar9Jar")
+            }
+        }
+    }
+    // See https://github.com/java9-modularity/gradle-modules-plugin/issues/162 and https://youtrack.jetbrains.com/issue/KT-32202
+    afterEvaluate {
+        tasks["kaptKotlin"].dependsOn("moveModuleInfoInMRJARs")
+    }
     dokkaHtml {
         outputDirectory.set(buildDir.resolve("javadoc"))
         moduleName.set("KTrader-Broker-CTP")
@@ -68,15 +96,14 @@ tasks {
         archiveClassifier.set("sources")
         from(sourceSets["main"].allSource)
     }
-    register<Jar>("pluginZip") {
+    register<Zip>("pluginZip") {
+        group = "distribution"
         archiveFileName.set("$pluginId-$pluginVersion.zip")
         into("classes") {
             with(jar.get())
         }
         into("lib") {
-            from({
-                configurations.runtimeClasspath.get().filter { it.name.endsWith("jar") }
-            })
+            from(configurations.runtimeClasspath.get().filter { it.name.endsWith("jar") })
         }
     }
     jar {
