@@ -1,13 +1,13 @@
 import org.gradle.kotlin.dsl.support.zipTo
 
 plugins {
-    kotlin("jvm") version "1.4.20"
-    kotlin("kapt") version "1.4.20"
+    kotlin("jvm") version "1.5.21"
+    kotlin("kapt") version "1.5.21"
     `java-library`
     `maven-publish`
     signing
-    id("org.jetbrains.dokka") version "1.4.10"
-    id("org.javamodularity.moduleplugin") version "1.7.0"
+    id("org.jetbrains.dokka") version "1.4.32"
+    id("org.javamodularity.moduleplugin") version "1.8.7"
 }
 
 group = "org.rationalityfrontline.ktrader"
@@ -33,18 +33,23 @@ repositories {
 configurations.create("mrjar9")
 
 dependencies {
-    val pf4jVersion = "3.4.1"
+    val pf4j = "org.pf4j:pf4j:3.7.0-SNAPSHOT"
+    val ktraderBrokerApi = "org.rationalityfrontline.ktrader:ktrader-broker-api:0.1.6-SNAPSHOT"
     compileOnly(kotlin("stdlib"))
-    compileOnly("org.rationalityfrontline.ktrader:ktrader-broker-api:0.1.1-SNAPSHOT")
-    kapt("org.pf4j:pf4j:$pf4jVersion")
-    add("mrjar9", "org.pf4j:pf4j:$pf4jVersion")
-    implementation("org.rationalityfrontline:jctp:6.3.19-1.0.1")
+    compileOnly(ktraderBrokerApi)
+    compileOnly(pf4j)
+    kapt(pf4j)
+    add("mrjar9", pf4j)
+    implementation("org.rationalityfrontline:jctp:6.6.1_P1-1.0.0") {
+        exclude(group = "org.slf4j", module = "slf4j-api")
+    }
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.1")
+    testImplementation(pf4j)
+    testImplementation(ktraderBrokerApi)
     testImplementation(platform("org.junit:junit-bom:5.7.0"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.7.0")
-}
-
-configurations.runtime {
-    exclude(group = "org.slf4j", module = "slf4j-api")
+    testImplementation("org.slf4j:slf4j-api:1.7.30")
+    testImplementation("org.slf4j:slf4j-simple:1.7.30")
 }
 
 sourceSets.main {
