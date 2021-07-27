@@ -742,7 +742,9 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 val qryField = CThostFtdcQryInstrumentCommissionRateField().apply {
                     brokerID = config.brokerId
                     investorID = config.investorId
-                    instrumentID = parseCode(code).second
+                    val (excId, insId) = parseCode(code)
+                    exchangeID = excId
+                    instrumentID = insId
                 }
                 val requestId = nextRequestId()
                 runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
@@ -773,9 +775,45 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     }
 
     /**
-     * 获取缓存的期货手续费率，如果没有，则查询后再获取
+     * 查询期权手续费率，如果 [code] 为 null（默认），则查询所有当前持仓合约的手续费率。
+     * 已查过手续费的不会再次查询。查询到的结果会自动更新到对应的 [instruments] 中
      */
-    private fun getOrQueryFuturesCommissionRate(instrument: Instrument): CommissionRate? {
+    private suspend fun queryOptionsCommissionRate(code: String? = null) {
+        if (code == null) {
+            val qryField = CThostFtdcQryOptionInstrCommRateField().apply {
+                brokerID = config.brokerId
+                investorID = config.investorId
+            }
+            val requestId = nextRequestId()
+            runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrCommRate(qryField, requestId) }, {
+                suspendCoroutine { continuation ->
+                    requestMap[requestId] = RequestContinuation(requestId, continuation)
+                }
+            })
+        } else {
+            val instrument = instruments[code]
+            if (instrument != null && instrument.commissionRate == null && instrument.type == InstrumentType.OPTIONS) {
+                val qryField = CThostFtdcQryOptionInstrCommRateField().apply {
+                    brokerID = config.brokerId
+                    investorID = config.investorId
+                    val (excId, insId) = parseCode(code)
+                    exchangeID = excId
+                    instrumentID = insId
+                }
+                val requestId = nextRequestId()
+                runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrCommRate(qryField, requestId) }, {
+                    suspendCoroutine { continuation ->
+                        requestMap[requestId] = RequestContinuation(requestId, continuation)
+                    }
+                })
+            }
+        }
+    }
+
+    /**
+     * 获取缓存的期货/期权手续费率，如果没有，则查询后再获取
+     */
+    private fun getOrQueryCommissionRate(instrument: Instrument): CommissionRate? {
         if (config.disableFeeCalculation) return null
         if (instrument.commissionRate == null) {
             runBlocking { prepareFeeCalculation(instrument.code, false) }
@@ -821,7 +859,16 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 }
             }
             InstrumentType.OPTIONS -> {
-                // TODO 查询期权费用
+                if (instrument.commissionRate == null) {
+                    runWithRetry({ queryOptionsCommissionRate(code) }) { e ->
+                        if (throwException){
+                            throw e
+                        } else {
+                            postBrokerEvent(BrokerEventType.TD_ERROR, "查询期权手续费率出错：$code, $e")
+                        }
+                    }
+                }
+                // TODO 查询期权保证金率
             }
         }
     }
@@ -835,7 +882,8 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             // 因为 queryFuturesCommissionRate 可能会进行申报手续费的二次异步查询，所以先查手续费率
             runWithRetry({ queryFuturesCommissionRate() })
             runWithRetry({ queryFuturesMarginRate() })
-            // TODO 查询期权费用
+            runWithRetry({ queryOptionsCommissionRate() })
+            // TODO 查询期权保证金率
         } else {
             codes.forEach {
                 prepareFeeCalculation(it)
@@ -970,7 +1018,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 }
                 // 如果是中金所，计算申报手续费
                 if (order.code.startsWith(ExchangeID.CFFEX)) {
-                    val com = getOrQueryFuturesCommissionRate(instrument)
+                    val com = getOrQueryCommissionRate(instrument)
                     if (com != null) {
                         when (order.status) {
                             OrderStatus.ACCEPTED,
@@ -1007,12 +1055,13 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     fun calculateTrade(trade: Trade, extras: Map<String, Any>? = null) {
         val instrument = instruments[trade.code] ?: return
         when (instrument.type) {
-            InstrumentType.FUTURES -> {
+            InstrumentType.FUTURES,
+            InstrumentType.OPTIONS, -> {
                 if (trade.turnover == 0.0) {
                     trade.turnover = trade.volume * trade.price * instrument.volumeMultiple
                 }
                 if (trade.commission == 0.0) {
-                    val com = getOrQueryFuturesCommissionRate(instrument)
+                    val com = getOrQueryCommissionRate(instrument)
                     if (com != null) {
                         when (trade.offset) {
                             OrderOffset.OPEN -> {
@@ -1028,12 +1077,6 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                         }
                     }
                 }
-            }
-            InstrumentType.OPTIONS -> {
-                if (trade.turnover == 0.0) {
-                    trade.turnover = trade.volume * trade.price * instrument.volumeMultiple
-                }
-                // TODO 计算期权 Trade：处理期权手续费计算及检查上面的交易额计算是否有问题
             }
         }
     }
@@ -1558,7 +1601,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     val yesterdayVolume = position.volume - position.todayVolume
                     var todayClosed = 0
                     var yesterdayClosed = 0
-                    val com = getOrQueryFuturesCommissionRate(instrument)
+                    val com = getOrQueryCommissionRate(instrument)
                     when (pTrade.exchangeID) {
                         ExchangeID.SHFE, ExchangeID.INE -> {
                             trade.offset = order?.offset ?: trade.offset
@@ -2003,9 +2046,9 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             val request = requestMap[nRequestID] ?: return
             checkRspInfo(pRspInfo, {
                 if (pCommissionRate != null) {
-                    // code 可能为具体合约代码（"SHFE.ru2109"），也可能为品种代码（"ru"）
+                    // code 可能为具体合约代码（"SHFE.ru2109"），也可能为品种代码（"ru"）。注意 pCommissionRate.exchangeID 为空
                     val code = mdApi.codeMap[pCommissionRate.instrumentID] ?: pCommissionRate.instrumentID
-                    val commissionRate = Translator.commissionRateC2A(pCommissionRate, code)
+                    val commissionRate = Translator.futuresCommissionRateC2A(pCommissionRate, code)
                     val instrument = instruments[code]
                     var standardCode = ""
                     // 如果是品种代码，更新 instruments 中所有该品种的手续费
@@ -2074,6 +2117,52 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                         it.orderCancelFeeByTrade = pOrderCommRate.orderActionCommByTrade
                         it.orderCancelFeeByVolume = pOrderCommRate.orderActionCommByVolume
                     }
+                }
+                if (bIsLast) {
+                    (request.continuation as Continuation<Unit>).resume(Unit)
+                    requestMap.remove(nRequestID)
+                }
+            }) { errorCode, errorMsg ->
+                request.continuation.resumeWithException(Exception("$errorMsg ($errorCode)"))
+                requestMap.remove(nRequestID)
+            }
+        }
+
+        /**
+         * 期权手续费率查询请求响应，会自动更新 [instruments] 中对应的手续费率信息
+         */
+        override fun OnRspQryOptionInstrCommRate(
+            pCommissionRate: CThostFtdcOptionInstrCommRateField?,
+            pRspInfo: CThostFtdcRspInfoField?,
+            nRequestID: Int,
+            bIsLast: Boolean
+        ) {
+            val request = requestMap[nRequestID] ?: return
+            checkRspInfo(pRspInfo, {
+                if (pCommissionRate != null) {
+                    // pCommissionRate.exchangeID 为空，pCommissionRate.instrumentID 中金所为期货品种代码，郑商所为期货品种代码后接字母 C/P，其它为期货品种代码后接 _o
+                    var optionsType = OptionsType.UNKNOWN
+                    val productId = when {
+                        pCommissionRate.instrumentID.endsWith("_o") -> pCommissionRate.instrumentID.dropLast(2)
+                        pCommissionRate.instrumentID.endsWith("C") -> {
+                            optionsType = OptionsType.CALL
+                            pCommissionRate.instrumentID.dropLast(1)
+                        }
+                        pCommissionRate.instrumentID.endsWith("P") -> {
+                            optionsType = OptionsType.PUT
+                            pCommissionRate.instrumentID.dropLast(1)
+                        }
+                        else -> pCommissionRate.instrumentID
+                    }
+                    val commissionRate = Translator.optionsCommissionRateC2A(pCommissionRate, productId)
+                    val instrumentList = instruments.values.filter {
+                        if (it.type != InstrumentType.OPTIONS) return@filter false
+                        if (it.commissionRate != null) return@filter false
+                        if (optionsType != OptionsType.UNKNOWN && optionsType != it.optionsType) return@filter false
+                        val product = codeProductMap[it.code] ?: return@filter false
+                        return@filter parseCode(product).second == productId
+                    }
+                    instrumentList.forEach { it.commissionRate = commissionRate }
                 }
                 if (bIsLast) {
                     (request.continuation as Continuation<Unit>).resume(Unit)

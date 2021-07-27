@@ -169,8 +169,8 @@ class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config,
         tdApi.prepareFeeCalculation(codes, extras)
     }
 
-    override fun calculatePosition(positions: Position, extras: Map<String, Any>?) {
-        tdApi.calculatePosition(positions, extras = extras)
+    override fun calculatePosition(position: Position, extras: Map<String, Any>?) {
+        tdApi.calculatePosition(position, extras = extras)
     }
 
     override fun calculateOrder(order: Order, extras: Map<String, Any>?) {

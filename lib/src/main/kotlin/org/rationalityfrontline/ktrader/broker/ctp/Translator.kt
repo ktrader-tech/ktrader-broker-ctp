@@ -271,7 +271,7 @@ internal object Translator {
         )
     }
 
-    fun commissionRateC2A(crField: CThostFtdcInstrumentCommissionRateField, code: String): CommissionRate {
+    fun futuresCommissionRateC2A(crField: CThostFtdcInstrumentCommissionRateField, code: String): CommissionRate {
         return CommissionRate(
             code = code,
             openRatioByMoney = crField.openRatioByMoney,
@@ -280,6 +280,20 @@ internal object Translator {
             closeRatioByVolume = crField.closeRatioByVolume,
             closeTodayRatioByMoney = crField.closeTodayRatioByMoney,
             closeTodayRatioByVolume = crField.closeTodayRatioByVolume,
+        )
+    }
+
+    fun optionsCommissionRateC2A(crField: CThostFtdcOptionInstrCommRateField, code: String): CommissionRate {
+        return CommissionRate(
+            code = code,
+            openRatioByMoney = crField.openRatioByMoney,
+            openRatioByVolume = crField.openRatioByVolume,
+            closeRatioByMoney = crField.closeRatioByMoney,
+            closeRatioByVolume = crField.closeRatioByVolume,
+            closeTodayRatioByMoney = crField.closeTodayRatioByMoney,
+            closeTodayRatioByVolume = crField.closeTodayRatioByVolume,
+            optionsStrikeRationByMoney = crField.strikeRatioByMoney,
+            optionsStrikeRationByVolume = crField.strikeRatioByVolume,
         )
     }
 

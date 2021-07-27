@@ -35,7 +35,7 @@ class CtpTest {
             logger.info(ctpApi.getTradingDay().toString())
             println(ctpApi.queryAssets())
             println(ctpApi.queryPositions().joinToString(",\n"))
-            println(ctpApi.queryOrders().joinToString(",\n"))
+            println(ctpApi.queryOrders(onlyUnfinished = false).joinToString(",\n"))
             println(ctpApi.queryTrades().joinToString(",\n"))
             ctpApi.close()
             logger.info("CLOSED")
