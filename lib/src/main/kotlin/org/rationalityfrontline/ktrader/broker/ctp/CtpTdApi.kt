@@ -75,7 +75,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      */
     val instruments: MutableMap<String, Instrument> = mutableMapOf()
     /**
-     * 品种代码表，key 为合约 code，value 为品种代码（code 的英文前缀部分）。用于从 code 快速映射到 instrumentStatusMap
+     * 品种代码表，key 为合约 code，value 为品种代码(productId)。用于从 code 快速映射到 [productStatusMap]
      */
     private val codeProductMap: MutableMap<String, String> = mutableMapOf()
     /**
@@ -1153,7 +1153,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 THOST_FTDC_IS_Closed -> MarketStatus.CLOSED
                 else -> MarketStatus.UNKNOWN
             }
-            productStatusMap["${pInstrumentStatus.exchangeID}.${pInstrumentStatus.instrumentID}"] = marketStatus
+            productStatusMap[pInstrumentStatus.instrumentID] = marketStatus
         }
 
         /**
@@ -1176,7 +1176,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
         }
 
         /**
-         * 行情前置连接时回调。会将 [requestId] 置为 0；发送一条 [BrokerEventType.TD_NET_CONNECTED] 信息；自动请求客户端认证 tdApi.ReqAuthenticate，参见 [OnRspAuthenticate]
+         * 行情前置连接时回调。会将 [requestId] 置为 0；发送一条 [BrokerEventType.TD_NET_CONNECTED] 信息
          */
         override fun OnFrontConnected() {
             requestId.set(0)
@@ -1203,10 +1203,9 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 // 查询全市场合约
                 runWithRetry({
                     val allInstruments = queryAllInstruments(false, null)
-                    val delimiter = "[0-9]".toRegex()
                     allInstruments.forEach {
                         instruments[it.code] = it
-                        codeProductMap[it.code] = it.code.split(delimiter, limit = 2)[0]
+                        codeProductMap[it.code] = it.productId
                         mdApi.codeMap[it.code.split('.', limit = 2)[1]] = it.code
                     }
                 }) { e ->
@@ -1279,7 +1278,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
         }
 
         /**
-         * 客户端认证请求响应，在该回调中自动请求用户登录 tdApi.ReqUserLogin，参见 [OnRspUserLogin]
+         * 客户端认证请求响应
          */
         override fun OnRspAuthenticate(
             pRspAuthenticateField: CThostFtdcRspAuthenticateField?,
@@ -1300,7 +1299,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
         }
 
         /**
-         * 用户登录请求响应，在该回调中自动请求结算单确认 tdApi.ReqSettlementInfoConfirm (否则因交易所规定无法报撤单)，参见 [OnRspSettlementInfoConfirm]
+         * 用户登录请求响应
          */
         override fun OnRspUserLogin(
             pRspUserLogin: CThostFtdcRspUserLoginField?,
@@ -1361,8 +1360,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
         }
 
         /**
-         * 结算单确认请求响应，在该回调中自动查询全市场合约 (用于更新 [instruments], [codeProductMap], mdApi.codeMap)，
-         * 并自动查询持仓合约的保证金率及手续费率（用于计算手续费及保证金），以及当前持仓信息（缓存并本地维护，用于加速查询持仓及判断平今平昨）
+         * 结算单确认请求响应
          */
         override fun OnRspSettlementInfoConfirm(
             pSettlementInfoConfirm: CThostFtdcSettlementInfoConfirmField?,
@@ -2056,8 +2054,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                         val instrumentList = instruments.values.filter {
                             if (it.type != InstrumentType.FUTURES) return@filter false
                             if (it.commissionRate != null) return@filter false
-                            val product = codeProductMap[it.code] ?: return@filter false
-                            return@filter parseCode(product).second == code
+                            return@filter it.productId == code
                         }
                         if (instrumentList.isNotEmpty()) {
                             instrumentList.forEach { it.commissionRate = commissionRate }
@@ -2108,8 +2105,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     val commissionList = instruments.values.filter {
                         if (it.type != InstrumentType.FUTURES) return@filter false
                         if (it.commissionRate == null) return@filter false
-                        val product = codeProductMap[it.code] ?: return@filter false
-                        return@filter parseCode(product).second == pOrderCommRate.instrumentID
+                        return@filter it.productId == pOrderCommRate.instrumentID
                     }.map { it.commissionRate!! }
                     commissionList.forEach {
                         it.orderInsertFeeByTrade = pOrderCommRate.orderCommByTrade
@@ -2142,25 +2138,12 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 if (pCommissionRate != null) {
                     // pCommissionRate.exchangeID 为空，pCommissionRate.instrumentID 中金所为期货品种代码，郑商所为期货品种代码后接字母 C/P，其它为期货品种代码后接 _o
                     var optionsType = OptionsType.UNKNOWN
-                    val productId = when {
-                        pCommissionRate.instrumentID.endsWith("_o") -> pCommissionRate.instrumentID.dropLast(2)
-                        pCommissionRate.instrumentID.endsWith("C") -> {
-                            optionsType = OptionsType.CALL
-                            pCommissionRate.instrumentID.dropLast(1)
-                        }
-                        pCommissionRate.instrumentID.endsWith("P") -> {
-                            optionsType = OptionsType.PUT
-                            pCommissionRate.instrumentID.dropLast(1)
-                        }
-                        else -> pCommissionRate.instrumentID
-                    }
-                    val commissionRate = Translator.optionsCommissionRateC2A(pCommissionRate, productId)
+                    val commissionRate = Translator.optionsCommissionRateC2A(pCommissionRate)
                     val instrumentList = instruments.values.filter {
                         if (it.type != InstrumentType.OPTIONS) return@filter false
                         if (it.commissionRate != null) return@filter false
                         if (optionsType != OptionsType.UNKNOWN && optionsType != it.optionsType) return@filter false
-                        val product = codeProductMap[it.code] ?: return@filter false
-                        return@filter parseCode(product).second == productId
+                        return@filter it.productId == pCommissionRate.instrumentID
                     }
                     instrumentList.forEach { it.commissionRate = commissionRate }
                 }

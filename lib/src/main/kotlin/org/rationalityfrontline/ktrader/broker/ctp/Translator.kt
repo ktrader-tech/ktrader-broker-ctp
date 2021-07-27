@@ -129,13 +129,15 @@ internal object Translator {
         return try {
             val type = when (insField.productClass) {
                 jctpConstants.THOST_FTDC_PC_Futures -> InstrumentType.FUTURES
-                jctpConstants.THOST_FTDC_PC_Options -> InstrumentType.OPTIONS
+                jctpConstants.THOST_FTDC_PC_Options,
+                jctpConstants.THOST_FTDC_PC_SpotOption, -> InstrumentType.OPTIONS
                 else -> InstrumentType.UNKNOWN
             }
             if (type == InstrumentType.UNKNOWN) null else {
                 Instrument(
                     code = "${insField.exchangeID}.${insField.instrumentID}",
                     type = type,
+                    productId = insField.productID,
                     name = insField.instrumentName,
                     priceTick = insField.priceTick,
                     volumeMultiple = insField.volumeMultiple,
@@ -148,7 +150,9 @@ internal object Translator {
                         jctpConstants.THOST_FTDC_CP_CallOptions -> OptionsType.CALL
                         jctpConstants.THOST_FTDC_CP_PutOptions -> OptionsType.PUT
                         else -> null
-                    }
+                    },
+                    optionsUnderlyingCode = "${insField.exchangeID}.${insField.underlyingInstrID}",
+                    optionsStrikePrice = insField.strikePrice
                 )
             }
         } catch (e: Exception) {
@@ -283,9 +287,9 @@ internal object Translator {
         )
     }
 
-    fun optionsCommissionRateC2A(crField: CThostFtdcOptionInstrCommRateField, code: String): CommissionRate {
+    fun optionsCommissionRateC2A(crField: CThostFtdcOptionInstrCommRateField): CommissionRate {
         return CommissionRate(
-            code = code,
+            code = crField.instrumentID,
             openRatioByMoney = crField.openRatioByMoney,
             openRatioByVolume = crField.openRatioByVolume,
             closeRatioByMoney = crField.closeRatioByMoney,
