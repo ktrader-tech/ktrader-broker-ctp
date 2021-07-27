@@ -18,6 +18,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
+import kotlin.math.max
 
 class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) {
     private val tdApi: CThostFtdcTraderApi
@@ -89,11 +90,11 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 期货保证金类型
      */
-    private var futuresMarginPriceType: MarginPriceType = MarginPriceType.YESTERDAY_SETTLEMENT_PRICE
+    private var futuresMarginPriceType: MarginPriceType = MarginPriceType.PRE_SETTLEMENT_PRICE
     /**
      * 期权保证金类型
      */
-    private var optionsMarginPriceType: MarginPriceType = MarginPriceType.YESTERDAY_SETTLEMENT_PRICE
+    private var optionsMarginPriceType: MarginPriceType = MarginPriceType.PRE_SETTLEMENT_PRICE
     /**
      * 本地缓存的资产信息，并不维护
      */
@@ -405,9 +406,8 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 return cachedTick
             }
         }
-        val instrumentId = parseCode(code).second
         val qryField = CThostFtdcQryDepthMarketDataField().apply {
-            instrumentID = instrumentId
+            instrumentID = parseCode(code).second
         }
         val requestId = nextRequestId()
         return runWithResultCheck({ tdApi.ReqQryDepthMarketData(qryField, requestId) }, {
@@ -721,6 +721,42 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     }
 
     /**
+     * 查询期权保证金，如果 [code] 为 null（默认），则查询所有当前持仓合约的保证金。
+     * 已查过保证金的不会再次查询。查询到的结果会自动更新到对应的 [instruments] 中，字段映射参见 [Translator.optionsMarginC2A]
+     */
+    private suspend fun queryOptionsMargin(code: String? = null) {
+        if (code == null) {
+            val qryField = CThostFtdcQryOptionInstrTradeCostField().apply {
+                brokerID = config.brokerId
+                investorID = config.investorId
+                hedgeFlag = THOST_FTDC_HF_Speculation
+            }
+            val requestId = nextRequestId()
+            runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrTradeCost(qryField, requestId) }, {
+                suspendCoroutine { continuation ->
+                    requestMap[requestId] = RequestContinuation(requestId, continuation)
+                }
+            })
+        } else {
+            val instrument = instruments[code]
+            if (instrument != null && instrument.marginRate == null && instrument.type == InstrumentType.OPTIONS) {
+                val qryField = CThostFtdcQryOptionInstrTradeCostField().apply {
+                    brokerID = config.brokerId
+                    investorID = config.investorId
+                    hedgeFlag = THOST_FTDC_HF_Speculation
+                    instrumentID = parseCode(code).second
+                }
+                val requestId = nextRequestId()
+                runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrTradeCost(qryField, requestId) }, {
+                    suspendCoroutine { continuation ->
+                        requestMap[requestId] = RequestContinuation(requestId, continuation)
+                    }
+                })
+            }
+        }
+    }
+
+    /**
      * 查询期货手续费率，如果 [code] 为 null（默认），则查询所有当前持仓合约的手续费率。如果遇到中金所合约，会进行申报手续费的二次查询。
      * 已查过手续费的不会再次查询。查询到的结果会自动更新到对应的 [instruments] 中
      */
@@ -824,7 +860,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 获取缓存的期货保证金率，如果没有，则查询后再获取
      */
-    private fun getOrQueryFuturesMarginRate(instrument: Instrument): MarginRate? {
+    private fun getOrQueryMarginRate(instrument: Instrument): MarginRate? {
         if (config.disableFeeCalculation) return null
         if (instrument.marginRate == null) {
             runBlocking { prepareFeeCalculation(instrument.code, false) }
@@ -837,39 +873,31 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      */
     private suspend fun prepareFeeCalculation(code: String, throwException: Boolean = true) {
         val instrument = instruments[code] ?: return
+        fun handleException(e: Exception, msg: String) {
+            if (throwException){
+                throw e
+            } else {
+                postBrokerEvent(BrokerEventType.TD_ERROR, "查询期货手续费率出错：$code, $e")
+            }
+        }
         when (instrument.type) {
             InstrumentType.FUTURES -> {
                 if (instrument.commissionRate == null) {
-                    runWithRetry({ queryFuturesCommissionRate(code) }) { e ->
-                        if (throwException){
-                            throw e
-                        } else {
-                            postBrokerEvent(BrokerEventType.TD_ERROR, "查询期货手续费率出错：$code, $e")
-                        }
-                    }
+                    runWithRetry({ queryFuturesCommissionRate(code) }) { e -> handleException(e, "查询期货手续费率出错：$code, $e") }
                 }
                 if (instrument.marginRate == null) {
-                    runWithRetry({ queryFuturesMarginRate(code) }) { e ->
-                        if (throwException){
-                            throw e
-                        } else {
-                            postBrokerEvent(BrokerEventType.TD_ERROR, "查询期货保证金率出错：$code, $e")
-                        }
-                    }
+                    runWithRetry({ queryFuturesMarginRate(code) }) { e -> handleException(e, "查询期货保证金率出错：$code, $e") }
                 }
             }
             InstrumentType.OPTIONS -> {
                 if (instrument.commissionRate == null) {
-                    runWithRetry({ queryOptionsCommissionRate(code) }) { e ->
-                        if (throwException){
-                            throw e
-                        } else {
-                            postBrokerEvent(BrokerEventType.TD_ERROR, "查询期权手续费率出错：$code, $e")
-                        }
-                    }
+                    runWithRetry({ queryOptionsCommissionRate(code) }) { e -> handleException(e, "查询期权手续费率出错：$code, $e") }
                 }
-                // TODO 查询期权保证金率
+                if (instrument.marginRate == null) {
+                    runWithRetry({ queryOptionsMargin(code) }) { e -> handleException(e, "查询期保证金出错：$code, $e") }
+                }
             }
+            else -> Unit
         }
     }
 
@@ -883,7 +911,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             runWithRetry({ queryFuturesCommissionRate() })
             runWithRetry({ queryFuturesMarginRate() })
             runWithRetry({ queryOptionsCommissionRate() })
-            // TODO 查询期权保证金率
+            runWithRetry({ queryOptionsMargin() })
         } else {
             codes.forEach {
                 prepareFeeCalculation(it)
@@ -892,21 +920,21 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     }
 
     /**
-     * 计算期货保证金，获取价格时会依次尝试从 mdApi.lastTicks, cachedTickMap, queryLastTick(成功后会自动缓存到 cachedTickMap) 获取
+     * 获取缓存的最新/旧的 [Tick]，如果都没有，那么试图查询最新的并缓存
+     * @return [Pair.first] 为查询到的 [Tick]，可能为 null。[Pair.second] 为 [Boolean]，表示查询到的 Tick 是否是实时最新的
      */
-    private fun calculateFuturesMargin(instrument: Instrument, direction: Direction, yesterdayVolume: Int, todayVolume: Int, avgOpenPrice: Double, fallback: Double): Double {
-        val marginRate = getOrQueryFuturesMarginRate(instrument) ?: return fallback
+    private fun getOrQueryTick(code: String): Pair<Tick?, Boolean> {
         var tick: Tick? = null
         var isLatestTick = false // 查询到的 tick 是否是最新的
         // 如果行情已连接且未禁止自动订阅，则优先尝试获取行情缓存的最新 tick
         if (mdApi.connected && !config.disableAutoSubscribe) {
-            tick = mdApi.lastTicks[instrument.code]
+            tick = mdApi.lastTicks[code]
             // 如果缓存的 tick 为空，说明未订阅该合约，那么订阅该合约以方便后续计算
             if (tick == null) {
                 try {
-                    runBlocking { mdApi.subscribeMarketData(listOf(instrument.code)) }
+                    runBlocking { mdApi.subscribeMarketData(listOf(code)) }
                 } catch (e: Exception) {
-                    postBrokerEvent(BrokerEventType.TD_ERROR, "计算保证金时订阅合约行情失败：${instrument.code}, $e")
+                    postBrokerEvent(BrokerEventType.TD_ERROR, "计算保证金时订阅合约行情失败：$code, $e")
                 }
             } else {
                 isLatestTick = true
@@ -914,19 +942,28 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
         }
         // 如果未从行情 API 中获得最新 tick，尝试从本地缓存中获取旧的 tick
         if (tick == null) {
-            tick = cachedTickMap[instrument.code]
+            tick = cachedTickMap[code]
             // 如果未从本地缓存中获得旧的 tick，查询最新 tick（查询操作会自动缓存 tick 至本地缓存中）
             if (tick == null) {
                 try {
                     runBlocking {
-                        tick = runWithRetry({ queryLastTick(instrument.code, useCache = false) })
+                        tick = runWithRetry({ queryLastTick(code, useCache = false) })
                         isLatestTick = true
                     }
                 } catch (e: Exception) {
-                    postBrokerEvent(BrokerEventType.TD_ERROR, "计算保证金时查询合约最新行情失败：${instrument.code}, $e")
+                    postBrokerEvent(BrokerEventType.TD_ERROR, "计算保证金时查询合约最新行情失败：$code, $e")
                 }
             }
         }
+        return Pair(tick, isLatestTick)
+    }
+
+    /**
+     * 计算期货保证金
+     */
+    private fun calculateFuturesMargin(instrument: Instrument, direction: Direction, yesterdayVolume: Int, todayVolume: Int, avgOpenPrice: Double, fallback: Double): Double {
+        val marginRate = getOrQueryMarginRate(instrument) ?: return fallback
+        val (tick, isLatestTick) = getOrQueryTick(instrument.code)
         if (tick == null) {
             return fallback
         } else {
@@ -939,19 +976,61 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             }
             var settlementVolume = yesterdayVolume  // 用昨结算价计算保证金的持仓
             var todayMargin = 0.0  // 与现价相关的保证金
-            // 如果价格是最新价且存在今仓      且保证金价格类型与现价有关，那么特别计算今仓保证金
-            if (isLatestTick && todayVolume > 0) {
-                when (futuresMarginPriceType) {
-                    MarginPriceType.TODAY_SETTLEMENT_PRICE -> todayMargin = calculateMargin(todayVolume, tick!!.todayAvgPrice)
-                    MarginPriceType.LAST_PRICE -> todayMargin = calculateMargin(todayVolume, tick!!.lastPrice)
-                    MarginPriceType.OPEN_PRICE -> todayMargin = calculateMargin(todayVolume, avgOpenPrice)
-                    else -> settlementVolume += todayVolume
+            // 如果存在今仓
+            if (todayVolume > 0) {
+                if (futuresMarginPriceType == MarginPriceType.OPEN_PRICE) {
+                    todayMargin = calculateMargin(todayVolume, avgOpenPrice)
+                } else {
+                    if (isLatestTick) {
+                        // 如果保证金价格类型与现价有关，那么特别计算今仓保证金
+                        when (futuresMarginPriceType) {
+                            MarginPriceType.TODAY_SETTLEMENT_PRICE -> todayMargin = calculateMargin(todayVolume, tick.todayAvgPrice)
+                            MarginPriceType.LAST_PRICE -> todayMargin = calculateMargin(todayVolume, tick.lastPrice)
+                            else -> settlementVolume += todayVolume
+                        }
+                    } else {
+                        settlementVolume += todayVolume
+                    }
                 }
-            } else { // 如果没有获取到最新价，或者今仓为0，那么统一按昨结算价计算保证金
-                settlementVolume += todayVolume
             }
-            val settlementMargin = calculateMargin(settlementVolume,  tick!!.yesterdaySettlementPrice)
+            val settlementMargin = calculateMargin(settlementVolume,  tick.preSettlementPrice)
             return todayMargin + settlementMargin
+        }
+    }
+
+    /**
+     * 计算期权保证金
+     */
+    private fun calculateOptionsMargin(instrument: Instrument, direction: Direction, volume: Int, avgOpenPrice: Double, fallback: Double, isOpen: Boolean): Double {
+        when (direction) {
+            Direction.LONG -> {  // 买方
+                return if (isOpen) avgOpenPrice * instrument.volumeMultiple else 0.0
+            }
+            Direction.SHORT -> {  // 卖方
+                val marginRate = getOrQueryMarginRate(instrument) ?: return fallback
+                fun calculateMargin(price: Double): Double {
+                    return volume * (price * instrument.volumeMultiple + max(marginRate.longMarginRatioByMoney, marginRate.shortMarginRatioByMoney))
+                }
+                if (optionsMarginPriceType == MarginPriceType.OPEN_PRICE && !isOpen) {  // 唯一一种不需查询 Tick 的情况
+                    return calculateMargin(avgOpenPrice)
+                }
+                val (tick, isLatestTick) = getOrQueryTick(instrument.code)
+                if (tick == null) {
+                    return fallback
+                } else {
+                    val price = if (isLatestTick) {
+                        when (optionsMarginPriceType) {
+                            MarginPriceType.MAX_PRE_SETTLEMENT_PRICE_LAST_PRICE -> max(tick.lastPrice, tick.preSettlementPrice)
+                            MarginPriceType.LAST_PRICE -> tick.lastPrice
+                            else -> tick.preSettlementPrice
+                        }
+                    } else {
+                        tick.preSettlementPrice
+                    }
+                    return calculateMargin(price)
+                }
+            }
+            else -> return fallback
         }
     }
 
@@ -961,42 +1040,32 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      */
     fun calculatePosition(position: Position, calculateValue: Boolean = true, extras: Map<String, Any>? = null) {
         val instrument = instruments[position.code] ?: return
-        when (instrument.type) {
-            InstrumentType.FUTURES -> {
-                // 计算开仓均价
-                if (position.volume != 0 && instrument.volumeMultiple != 0) {
-                    position.avgOpenPrice = position.openCost / position.volume / instrument.volumeMultiple
-                }
-                // 计算保证金
-                if (calculateValue) {
-                    // 这里传入的开仓成本是全体开仓成本，而不是今仓开仓成本，这导致在保证金价格类型为 OPEN_PRICE 时的保证金计算会不准确
-                    position.value = calculateFuturesMargin(instrument, position.direction, position.volume - position.todayVolume, position.todayVolume, position.avgOpenPrice, position.value)
-                }
-                // 获取最新价并计算 pnl
-                val lastTick =  mdApi.lastTicks[position.code]
-                if (lastTick != null) {
-                    position.lastPrice = lastTick.lastPrice
-                    position.pnl = position.lastPrice * instrument.volumeMultiple * position.volume - position.openCost
-                    if (position.direction == Direction.SHORT) {
-                        position.pnl *= -1
-                    }
+        if (instrument.type == InstrumentType.FUTURES || instrument.type == InstrumentType.OPTIONS) {
+            // 计算开仓均价
+            if (position.volume != 0 && instrument.volumeMultiple != 0) {
+                position.avgOpenPrice = position.openCost / position.volume / instrument.volumeMultiple
+            }
+            // 获取最新价并计算 pnl
+            val lastTick =  mdApi.lastTicks[position.code]
+            if (lastTick != null) {
+                position.lastPrice = lastTick.lastPrice
+                position.pnl = position.lastPrice * instrument.volumeMultiple * position.volume - position.openCost
+                if (position.direction == Direction.SHORT) {
+                    position.pnl *= -1
                 }
             }
-            InstrumentType.OPTIONS -> {
-                // 计算开仓均价
-                if (position.volume != 0 && instrument.volumeMultiple != 0) {
-                    position.avgOpenPrice = position.openCost / position.volume / instrument.volumeMultiple
-                }
-                // 获取最新价并计算 pnl
-                val lastTick =  mdApi.lastTicks[position.code]
-                if (lastTick != null) {
-                    position.lastPrice = lastTick.lastPrice
-                    position.pnl = position.lastPrice * instrument.volumeMultiple * position.volume - position.openCost
-                    if (position.direction == Direction.SHORT) {
-                        position.pnl *= -1
+            // 计算保证金
+            if (calculateValue) {
+                when (instrument.type) {
+                    InstrumentType.FUTURES -> {
+                        // 这里传入的开仓成本是全体开仓成本，而不是今仓开仓成本，这导致在保证金价格类型为 OPEN_PRICE 时的保证金计算会不准确
+                        position.value = calculateFuturesMargin(instrument, position.direction, position.yesterdayVolume, position.todayVolume, position.avgOpenPrice, position.value)
                     }
+                    InstrumentType.OPTIONS -> {
+                        position.value = calculateOptionsMargin(instrument, position.direction, position.volume, position.avgOpenPrice, position.value, false)
+                    }
+                    else -> Unit
                 }
-                // TODO 计算期权 Position：处理期权保证金、pnl 计算
             }
         }
     }
@@ -1006,45 +1075,40 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      */
     fun calculateOrder(order: Order, extras: Map<String, Any>? = null) {
         val instrument = instruments[order.code] ?: return
-        when (instrument.type) {
-            InstrumentType.FUTURES -> {
-                // 计算成交均价
-                if (order.filledVolume != 0 && instrument.volumeMultiple != 0) {
-                    order.avgFillPrice = order.turnover / order.filledVolume / instrument.volumeMultiple
+        if (instrument.type == InstrumentType.FUTURES || instrument.type == InstrumentType.OPTIONS) {
+            // 计算成交均价
+            if (order.filledVolume != 0 && instrument.volumeMultiple != 0) {
+                order.avgFillPrice = order.turnover / order.filledVolume / instrument.volumeMultiple
+            }
+            // 如果是开仓，计算冻结资金
+            val restVolume = order.volume - order.filledVolume
+            if (order.offset == OrderOffset.OPEN && restVolume > 0) {
+                when (instrument.type) {
+                    InstrumentType.FUTURES -> order.frozenCash = calculateFuturesMargin(instrument, order.direction, 0, restVolume, order.price, 0.0)
+                    InstrumentType.OPTIONS -> order.frozenCash = calculateOptionsMargin(instrument, order.direction, restVolume, order.price, 0.0, true)
                 }
-                // 如果是开仓，计算冻结资金
-                if (order.offset == OrderOffset.OPEN && order.volume > order.filledVolume) {
-                    order.frozenCash = calculateFuturesMargin(instrument, order.direction, 0, order.volume - order.filledVolume, order.price, 0.0)
-                }
-                // 如果是中金所，计算申报手续费
-                if (order.code.startsWith(ExchangeID.CFFEX)) {
-                    val com = getOrQueryCommissionRate(instrument)
-                    if (com != null) {
-                        when (order.status) {
-                            OrderStatus.ACCEPTED,
-                            OrderStatus.PARTIALLY_FILLED,
-                            OrderStatus.FILLED -> {
-                                if (!order.insertFeeCalculated) {
-                                    order.commission += com.orderInsertFeeByTrade + com.orderInsertFeeByVolume * order.volume
-                                    order.insertFeeCalculated = true
-                                }
+            }
+            // 如果是中金所股指期货，计算申报手续费
+            if (order.code.startsWith(ExchangeID.CFFEX) && instrument.type == InstrumentType.FUTURES) {
+                val com = getOrQueryCommissionRate(instrument)
+                if (com != null) {
+                    when (order.status) {
+                        OrderStatus.ACCEPTED,
+                        OrderStatus.PARTIALLY_FILLED,
+                        OrderStatus.FILLED -> {
+                            if (!order.insertFeeCalculated) {
+                                order.commission += com.orderInsertFeeByTrade + com.orderInsertFeeByVolume * order.volume
+                                order.insertFeeCalculated = true
                             }
-                            OrderStatus.CANCELED -> {
-                                if (!order.cancelFeeCalculated) {
-                                    order.commission += com.orderCancelFeeByTrade + com.orderCancelFeeByVolume * order.volume
-                                    order.cancelFeeCalculated = true
-                                }
+                        }
+                        OrderStatus.CANCELED -> {
+                            if (!order.cancelFeeCalculated) {
+                                order.commission += com.orderCancelFeeByTrade + com.orderCancelFeeByVolume * order.volume
+                                order.cancelFeeCalculated = true
                             }
                         }
                     }
                 }
-            }
-            InstrumentType.OPTIONS -> {
-                // 计算成交均价
-                if (order.filledVolume != 0 && instrument.volumeMultiple != 0) {
-                    order.avgFillPrice = order.turnover / order.filledVolume / instrument.volumeMultiple
-                }
-                // TODO 计算期权 Order：处理期权冻结资金计算
             }
         }
     }
@@ -1568,7 +1632,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     if (biPosition.long == null) {
                         biPosition.long = Position(
                             config.investorId,
-                            trade.code, Direction.LONG, 0, 0, 0.0, 0, 0, 0,
+                            trade.code, Direction.LONG, 0, 0, 0.0, 0, 0, 0, 0,
                             0, 0, 0.0, 0.0, 0.0, 0.0, 0.0
                         )
                     }
@@ -1579,7 +1643,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     if (biPosition.short == null) {
                         biPosition.short = Position(
                             config.investorId,
-                            trade.code, Direction.SHORT, 0, 0, 0.0, 0, 0, 0,
+                            trade.code, Direction.SHORT, 0, 0, 0.0, 0, 0, 0, 0,
                             0, 0, 0.0, 0.0, 0.0, 0.0, 0.0
                         )
                     }
@@ -1596,7 +1660,6 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     position.todayOpenVolume += trade.volume
                     position.openCost += trade.turnover
                 } else { // 如果不是开仓，则判断是平今还是平昨，上期所按 order 指令，其它三所涉及平今手续费减免时优先平今，否则优先平昨
-                    val yesterdayVolume = position.volume - position.todayVolume
                     var todayClosed = 0
                     var yesterdayClosed = 0
                     val com = getOrQueryCommissionRate(instrument)
@@ -1626,7 +1689,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                                         todayClosed = trade.volume
                                     }
                                     // 全部平昨
-                                    position.todayVolume == 0 && yesterdayVolume >= trade.volume -> {
+                                    position.todayVolume == 0 && position.yesterdayVolume >= trade.volume -> {
                                         trade.offset = OrderOffset.CLOSE_YESTERDAY
                                         yesterdayClosed = trade.volume
                                     }
@@ -1640,19 +1703,19 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                             } else {
                                 when {
                                     // 全部平昨
-                                    trade.volume <= yesterdayVolume -> {
+                                    trade.volume <= position.yesterdayVolume -> {
                                         trade.offset = OrderOffset.CLOSE_YESTERDAY
                                         yesterdayClosed = trade.volume
                                     }
                                     // 全部平今
-                                    yesterdayVolume == 0 && trade.volume <= position.todayVolume -> {
+                                    position.yesterdayVolume == 0 && trade.volume <= position.todayVolume -> {
                                         trade.offset = OrderOffset.CLOSE_TODAY
                                         todayClosed = trade.volume
                                     }
                                     // 部分平今部分平昨
                                     trade.volume <= position.volume -> {
                                         trade.offset = OrderOffset.CLOSE
-                                        yesterdayClosed = yesterdayVolume
+                                        yesterdayClosed = position.yesterdayVolume
                                         todayClosed = trade.volume - yesterdayClosed
                                     }
                                 }
@@ -1661,9 +1724,10 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     }
                     val totalClosed = todayClosed + yesterdayClosed
                     position.volume -= totalClosed
+                    position.todayVolume -= todayClosed
+                    position.yesterdayVolume -= yesterdayClosed
                     position.todayCloseVolume += totalClosed
                     position.frozenVolume -= totalClosed
-                    position.todayVolume -= todayClosed
                     // 由于未知持仓明细，因此此处只按开仓均价减去对应开仓成本，保持开仓均价不变，为此查询持仓明细太麻烦了
                     position.openCost -= position.avgOpenPrice * totalClosed * instrument.volumeMultiple
                     // 部分平今部分平昨，则本地计算手续费
@@ -2018,7 +2082,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     if (code != null) {
                         val instrument = instruments[code]
                         if (instrument != null && instrument.marginRate == null) {
-                            instrument.marginRate = Translator.marginRateC2A(pMarginRate, code)
+                            instrument.marginRate = Translator.futuresMarginRateC2A(pMarginRate, code)
                         }
                     }
                 }
@@ -2136,7 +2200,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             val request = requestMap[nRequestID] ?: return
             checkRspInfo(pRspInfo, {
                 if (pCommissionRate != null) {
-                    // pCommissionRate.exchangeID 为空，pCommissionRate.instrumentID 中金所为期货品种代码，郑商所为期货品种代码后接字母 C/P，其它为期货品种代码后接 _o
+                    // pCommissionRate.exchangeID 为空，pCommissionRate.instrumentID 为期货品种代码 (productId)
                     var optionsType = OptionsType.UNKNOWN
                     val commissionRate = Translator.optionsCommissionRateC2A(pCommissionRate)
                     val instrumentList = instruments.values.filter {
@@ -2146,6 +2210,35 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                         return@filter it.productId == pCommissionRate.instrumentID
                     }
                     instrumentList.forEach { it.commissionRate = commissionRate }
+                }
+                if (bIsLast) {
+                    (request.continuation as Continuation<Unit>).resume(Unit)
+                    requestMap.remove(nRequestID)
+                }
+            }) { errorCode, errorMsg ->
+                request.continuation.resumeWithException(Exception("$errorMsg ($errorCode)"))
+                requestMap.remove(nRequestID)
+            }
+        }
+
+        /**
+         * 期货保证金率查询请求响应，会自动更新 [instruments] 中对应的保证金率信息
+         */
+        override fun OnRspQryOptionInstrTradeCost(
+            pOptionMargin: CThostFtdcOptionInstrTradeCostField?,
+            pRspInfo: CThostFtdcRspInfoField?,
+            nRequestID: Int,
+            bIsLast: Boolean
+        ) {
+            val request = requestMap[nRequestID] ?: return
+            checkRspInfo(pRspInfo, {
+                if (pOptionMargin != null) {
+                    // pOptionMargin.exchangeID 为空，pOptionMargin.instrumentID 为具体合约代码
+                    val code = mdApi.codeMap[pOptionMargin.instrumentID] ?: pOptionMargin.instrumentID
+                    val instrument = instruments[code]
+                    if (instrument != null && instrument.marginRate == null) {
+                        instrument.marginRate = Translator.optionsMarginC2A(pOptionMargin, code)
+                    }
                 }
                 if (bIsLast) {
                     (request.continuation as Continuation<Unit>).resume(Unit)

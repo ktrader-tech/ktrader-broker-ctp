@@ -186,12 +186,27 @@ object ExchangeID {
 }
 
 /**
- * 保证金价格类型
+ * 期货保证金/期权权利金价格类型
  */
 internal enum class MarginPriceType {
-    YESTERDAY_SETTLEMENT_PRICE,
+    /**
+     * 昨结算价
+     */
+    PRE_SETTLEMENT_PRICE,
+    /**
+     * 最新价
+     */
     LAST_PRICE,
+    /**
+     * 今日成交均价
+     */
     TODAY_SETTLEMENT_PRICE,
+    /**
+     * 开仓价
+     */
     OPEN_PRICE,
-    MAX_SETTLEMENT_PRICE,
+    /**
+     * max(昨结算价, 最新价)
+     */
+    MAX_PRE_SETTLEMENT_PRICE_LAST_PRICE,
 }

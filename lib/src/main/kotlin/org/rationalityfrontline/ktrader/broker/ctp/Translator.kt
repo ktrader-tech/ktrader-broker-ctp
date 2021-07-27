@@ -20,12 +20,12 @@ internal object Translator {
 
     fun marginPriceTypeC2A(type: Char): MarginPriceType {
         return when (type) {
-            jctpConstants.THOST_FTDC_MPT_PreSettlementPrice -> MarginPriceType.YESTERDAY_SETTLEMENT_PRICE
+            jctpConstants.THOST_FTDC_MPT_PreSettlementPrice -> MarginPriceType.PRE_SETTLEMENT_PRICE
             jctpConstants.THOST_FTDC_MPT_SettlementPrice -> MarginPriceType.LAST_PRICE
             jctpConstants.THOST_FTDC_MPT_AveragePrice -> MarginPriceType.TODAY_SETTLEMENT_PRICE
             jctpConstants.THOST_FTDC_MPT_OpenPrice -> MarginPriceType.OPEN_PRICE
-            jctpConstants.THOST_FTDC_ORPT_MaxPreSettlementPrice -> MarginPriceType.MAX_SETTLEMENT_PRICE
-            else -> MarginPriceType.YESTERDAY_SETTLEMENT_PRICE
+            jctpConstants.THOST_FTDC_ORPT_MaxPreSettlementPrice -> MarginPriceType.MAX_PRE_SETTLEMENT_PRICE_LAST_PRICE
+            else -> MarginPriceType.PRE_SETTLEMENT_PRICE
         }
     }
 
@@ -90,9 +90,9 @@ internal object Translator {
             openInterest = tickField.openInterest.toInt() - (lastTick?.todayOpenInterest ?: tickField.openInterest.toInt()),
             direction = if (lastTick == null) calculateTickDirection(lastPrice, bidPrice[0], askPrice[0]) else calculateTickDirection(lastPrice, lastTick.bidPrice[0], lastTick.askPrice[0]),
             status = marketStatus,
-            yesterdayClose = formatDouble(tickField.preClosePrice),
-            yesterdaySettlementPrice = formatDouble(tickField.preSettlementPrice),
-            yesterdayOpenInterest = tickField.preOpenInterest.toInt(),
+            preClosePrice = formatDouble(tickField.preClosePrice),
+            preSettlementPrice = formatDouble(tickField.preSettlementPrice),
+            preOpenInterest = tickField.preOpenInterest.toInt(),
             todayOpenPrice = formatDouble(tickField.openPrice),
             todayClosePrice = formatDouble(tickField.closePrice),
             todayHighPrice = formatDouble(tickField.highestPrice),
@@ -248,10 +248,11 @@ internal object Translator {
             accountId = positionField.investorID,
             code = "${positionField.exchangeID}.${positionField.instrumentID}",
             direction = direction,
-            yesterdayVolume = positionField.ydPosition,
+            preVolume = positionField.ydPosition,
             volume = positionField.position,
             value = positionField.useMargin,
             todayVolume = positionField.todayPosition,
+            yesterdayVolume = positionField.position - positionField.todayPosition,
             frozenVolume = frozenVolume,
             closeableVolume = positionField.position - frozenVolume,
             todayOpenVolume = positionField.openVolume,
@@ -301,13 +302,23 @@ internal object Translator {
         )
     }
 
-    fun marginRateC2A(mrField: CThostFtdcInstrumentMarginRateField, code: String): MarginRate {
+    fun futuresMarginRateC2A(mrField: CThostFtdcInstrumentMarginRateField, code: String): MarginRate {
         return MarginRate(
             code = code,
             longMarginRatioByMoney = mrField.longMarginRatioByMoney,
             longMarginRatioByVolume = mrField.longMarginRatioByVolume,
             shortMarginRatioByMoney = mrField.shortMarginRatioByMoney,
             shortMarginRatioByVolume = mrField.shortMarginRatioByVolume,
+        )
+    }
+
+    fun optionsMarginC2A(mrField: CThostFtdcOptionInstrTradeCostField, code: String): MarginRate {
+        return MarginRate(
+            code = code,
+            longMarginRatioByMoney = mrField.fixedMargin,
+            longMarginRatioByVolume = mrField.exchFixedMargin,
+            shortMarginRatioByMoney = mrField.miniMargin,
+            shortMarginRatioByVolume = mrField.exchMiniMargin,
         )
     }
 }
