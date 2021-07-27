@@ -3,6 +3,7 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.kevent.KEvent
 import org.rationalityfrontline.ktrader.broker.api.BrokerEvent
@@ -15,6 +16,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
+import kotlin.math.min
 
 class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) {
     private val mdApi: CThostFtdcMdApi
@@ -36,6 +38,7 @@ class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      * 交易 Api 对象，用于获取合约的乘数、状态
      */
     lateinit var tdApi: CtpTdApi
+    private var inited = false
     var connected: Boolean = false
         private set
     /**
@@ -104,10 +107,12 @@ class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      * 连接行情前置并自动完成登录
      */
     suspend fun connect() {
+        if (inited) return
         suspendCoroutine<Unit> { continuation ->
-            val requestId = nextRequestId()
+            val requestId = Int.MIN_VALUE // 因为 OnFrontConnected 中 requestId 会重置为 0，为防止 requestId 重复，取整数最小值
             requestMap[requestId] = RequestContinuation(requestId, continuation, "connect")
             mdApi.Init()
+            inited = true
         }
     }
 
@@ -137,28 +142,41 @@ class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 订阅行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复订阅。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
      */
-    suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, Any>?) {
+    suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, Any>? = null) {
         if (codes.isEmpty()) return
         val filteredCodes = if (extras?.get("isForce") != true) codes.filter { it !in subscriptions } else codes
         if (filteredCodes.isEmpty()) return
-        val rawCodes = filteredCodes.map { code ->
-            val instrumentId = parseCode(code).second
-            if (codeMap[instrumentId] == null) codeMap[instrumentId] = code
-            instrumentId
-        }.toTypedArray()
-        runWithResultCheck({ mdApi.SubscribeMarketData(rawCodes) }, {
-            suspendCoroutine<Unit> { continuation ->
-                val requestId = nextRequestId()
-                // data 为订阅的 instrumentId 可变集合，在 CtpMdSpi.OnRspSubMarketData 中每收到一条合约订阅成功回报，就将该 instrumentId 从该可变集合中移除。当集合为空时，表明请求完成
-                requestMap[requestId] = RequestContinuation(requestId, continuation, "subscribeMarketData", rawCodes.toMutableSet())
+        // CTP 行情订阅目前（2021.07）每34个订阅会丢失一个订阅（OnRspSubMarketData 中会每34个回调返回一个 bIsLast 为 true），所以需要分割
+        if (filteredCodes.size >= 34) {
+            val fullCodes = filteredCodes.toList()
+            var startIndex = 0
+            while (startIndex < filteredCodes.size) {
+                subscribeMarketData(fullCodes.subList(startIndex, min(startIndex + 33, filteredCodes.size)))
+                startIndex += 33
             }
-        })
+        } else { // codes 长度小于34，直接订阅
+            val rawCodes = filteredCodes.map { code ->
+                val instrumentId = parseCode(code).second
+                if (codeMap[instrumentId] == null) codeMap[instrumentId] = code
+                instrumentId
+            }.toTypedArray()
+            // 加上超时是为了防止出现因订阅丢失导致 continuation 一直挂起的情况
+            withTimeout(1000) {
+                runWithResultCheck({ mdApi.SubscribeMarketData(rawCodes) }, {
+                    suspendCoroutine<Unit> { continuation ->
+                        val requestId = nextRequestId()
+                        // data 为订阅的 instrumentId 可变集合，在 CtpMdSpi.OnRspSubMarketData 中每收到一条合约订阅成功回报，就将该 instrumentId 从该可变集合中移除。当集合为空时，表明请求完成
+                        requestMap[requestId] = RequestContinuation(requestId, continuation, "subscribeMarketData", rawCodes.toMutableSet())
+                    }
+                })
+            }
+        }
     }
 
     /**
      * 退订行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复退订。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
      */
-    suspend fun unsubscribeMarketData(codes: Collection<String>, extras: Map<String, Any>?) {
+    suspend fun unsubscribeMarketData(codes: Collection<String>, extras: Map<String, Any>? = null) {
         if (codes.isEmpty()) return
         val filteredCodes = if (extras?.get("isForce") != true) codes.filter { it in subscriptions } else codes
         if (filteredCodes.isEmpty()) return
@@ -174,7 +192,7 @@ class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 订阅全市场合约行情。会自动检查合约订阅状态防止重复订阅。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
      */
-    suspend fun subscribeAllMarketData(extras: Map<String, Any>?) {
+    suspend fun subscribeAllMarketData(extras: Map<String, Any>? = null) {
         val codes = tdApi.instruments.keys
         if (codes.isEmpty()) throw Exception("交易前置未连接，无法获得全市场合约")
         subscribeMarketData(codes, extras)
@@ -183,7 +201,7 @@ class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 退订所有已订阅的合约行情。会自动检查合约订阅状态防止重复退订。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
      */
-    suspend fun unsubscribeAllMarketData(extras: Map<String, Any>?) {
+    suspend fun unsubscribeAllMarketData(extras: Map<String, Any>? = null) {
         unsubscribeMarketData(subscriptions.toList(), extras)
     }
 
@@ -270,23 +288,6 @@ class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 resumeRequests("connect", Unit)
             }, { errorCode, errorMsg ->
                 resumeRequestsWithException("connect", "请求用户登录失败：$errorMsg ($errorCode)")
-            })
-        }
-
-        /**
-         * 用户登出结果回调。暂时无用（目前没有主动请求 mdApi.ReqUserLogout 的情况）
-         */
-        override fun OnRspUserLogout(
-            pUserLogout: CThostFtdcUserLogoutField?,
-            pRspInfo: CThostFtdcRspInfoField?,
-            nRequestID: Int,
-            bIsLast: Boolean
-        ) {
-            checkRspInfo(pRspInfo, {
-                connected = false
-                postBrokerEvent(BrokerEventType.MD_USER_LOGGED_OUT, Unit)
-            }, { errorCode, errorMsg ->
-                postBrokerEvent(BrokerEventType.MD_ERROR, "请求用户登出失败：$errorMsg ($errorCode)")
             })
         }
 

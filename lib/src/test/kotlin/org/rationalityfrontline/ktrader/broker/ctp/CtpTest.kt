@@ -1,6 +1,5 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.rationalityfrontline.kevent.KEVENT
@@ -15,18 +14,29 @@ class CtpTest {
     @Test
     fun test() {
         KEVENT.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList()) {
-            logger.info(it.data.toString())
+            when (it.data.type) {
+                BrokerEventType.MD_TICK -> Unit
+                else -> {
+                    logger.info(it.data.toString())
+                }
+            }
         }
-        val ctpConfig = CtpAccounts.huaTaiP
+        val ctpConfig = mutableMapOf<String, Any>().apply {
+            putAll(CtpAccounts.huaTaiP)
+            put("cachePath", "./build/flow/")
+            put("flowSubscribeType", "QUICK")
+            put("disableAutoSubscribe", false)
+            put("disableFeeCalculation", false)
+        }
         val ctpApi = CtpBrokerApi(ctpConfig, KEVENT)
         runBlocking {
             ctpApi.connect()
             logger.info("CONNECTED")
             logger.info(ctpApi.getTradingDay().toString())
             println(ctpApi.queryAssets())
-            println(ctpApi.queryPositions())
-            ctpApi.subscribeMarketData(listOf("DCE.m2109"))
-            delay(50000000000)
+            println(ctpApi.queryPositions().joinToString(",\n"))
+            println(ctpApi.queryOrders().joinToString(",\n"))
+            println(ctpApi.queryTrades().joinToString(",\n"))
             ctpApi.close()
             logger.info("CLOSED")
         }

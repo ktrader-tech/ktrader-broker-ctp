@@ -1,14 +1,10 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
 import kotlinx.coroutines.delay
-import org.rationalityfrontline.jctp.CThostFtdcDepthMarketDataField
 import org.rationalityfrontline.jctp.CThostFtdcRspInfoField
-import org.rationalityfrontline.jctp.jctpConstants
-import org.rationalityfrontline.jctp.jctpConstants.*
-import org.rationalityfrontline.ktrader.broker.api.*
-import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.LocalTime
+import org.rationalityfrontline.ktrader.broker.api.Order
+import org.rationalityfrontline.ktrader.broker.api.Position
+import org.rationalityfrontline.ktrader.broker.api.Trade
 import kotlin.coroutines.Continuation
 
 /**
@@ -100,120 +96,26 @@ suspend fun <T> runWithRetry(action: suspend () -> T, onError: (Exception) -> T 
  * @param tag 标签，主要用于登录等没有 requestId 的情况
  * @param data 额外数据
  */
-data class RequestContinuation(
+internal data class RequestContinuation(
     val requestId: Int,
     val continuation: Continuation<*>,
     val tag: String = "",
     val data: Any = Unit,
 )
 
-/**
- * 翻译器，用于将本地的 CTP 信息翻译为标准的 BrokerApi 信息
- */
-object Translator {
+internal data class QueryTradesData(
+    val tradeId: String? = null,
+    var code: String? = null,
+    var orderSysId: String? = null,
+    val results: MutableList<Trade> = mutableListOf()
+)
 
-    private val THOST_FTDC_OF_Open_S = THOST_FTDC_OF_Open.toString()
-    private val THOST_FTDC_OF_Close_S = THOST_FTDC_OF_Close.toString()
-    private val THOST_FTDC_OF_CloseToday_S = THOST_FTDC_OF_CloseToday.toString()
-    private val THOST_FTDC_OF_CloseYesterday_S = THOST_FTDC_OF_CloseYesterday.toString()
-    val THOST_FTDC_HF_Speculation = jctpConstants.THOST_FTDC_HF_Speculation.toString()
-
-    fun directionA2C(direction: Direction): Char {
-        return when (direction) {
-            Direction.LONG -> THOST_FTDC_D_Buy
-            Direction.SHORT -> THOST_FTDC_D_Sell
-            Direction.UNKNOWN -> throw IllegalArgumentException("不允许输入 UNKNOWN")
-        }
-    }
-
-    fun directionC2A(direction: Char): Direction {
-        return when (direction) {
-            THOST_FTDC_D_Buy -> Direction.LONG
-            THOST_FTDC_D_Sell -> Direction.SHORT
-            THOST_FTDC_PD_Long -> Direction.LONG
-            THOST_FTDC_PD_Short -> Direction.SHORT
-            else -> Direction.UNKNOWN
-        }
-    }
-
-    fun offsetA2C(offset: OrderOffset): String {
-        return when (offset) {
-            OrderOffset.OPEN -> THOST_FTDC_OF_Open_S
-            OrderOffset.CLOSE -> THOST_FTDC_OF_Close_S
-            OrderOffset.CLOSE_TODAY -> THOST_FTDC_OF_CloseToday_S
-            OrderOffset.CLOSE_YESTERDAY -> THOST_FTDC_OF_CloseYesterday_S
-            OrderOffset.UNKNOWN -> throw IllegalArgumentException("不允许输入 UNKNOWN")
-        }
-    }
-
-    fun offsetL2C(offset: String): OrderOffset {
-        return when (offset) {
-            THOST_FTDC_OF_Open_S -> OrderOffset.OPEN
-            THOST_FTDC_OF_Close_S -> OrderOffset.CLOSE
-            THOST_FTDC_OF_CloseToday_S -> OrderOffset.CLOSE_TODAY
-            THOST_FTDC_OF_CloseYesterday_S -> OrderOffset.CLOSE_YESTERDAY
-            else -> OrderOffset.UNKNOWN
-        }
-    }
-
-    fun tickC2A(code: String, data: CThostFtdcDepthMarketDataField, lastTick: Tick? = null, volumeMultiple: Int? = null, marketStatus: MarketStatus = MarketStatus.UNKNOWN, onTimeParseError: (Exception) -> Unit): Tick {
-        val updateTime = try {
-            LocalTime.parse("${data.updateTime}.${data.updateMillisec}").atDate(LocalDate.now())
-        } catch (e: Exception) {
-            onTimeParseError(e)
-            LocalDateTime.now()
-        }
-        val lastPrice = formatDouble(data.lastPrice)
-        val bidPrice = arrayOf(formatDouble(data.bidPrice1), formatDouble(data.bidPrice2), formatDouble(data.bidPrice3), formatDouble(data.bidPrice4), formatDouble(data.bidPrice5))
-        val askPrice = arrayOf(formatDouble(data.askPrice1), formatDouble(data.askPrice2), formatDouble(data.askPrice3), formatDouble(data.askPrice4), formatDouble(data.askPrice5))
-        return Tick(
-            code = code,
-            time = updateTime,
-            lastPrice = lastPrice,
-            bidPrice = bidPrice,
-            askPrice = askPrice,
-            bidVolume = arrayOf(data.bidVolume1, data.bidVolume2, data.bidVolume3, data.bidVolume4, data.bidVolume5),
-            askVolume = arrayOf(data.askVolume1, data.askVolume2, data.askVolume3, data.askVolume4, data.askVolume5),
-            volume = data.volume - (lastTick?.todayVolume ?: data.volume),
-            turnover = data.turnover - (lastTick?.todayTurnover ?: data.turnover),
-            openInterest = data.openInterest.toInt() - (lastTick?.todayOpenInterest ?: data.openInterest.toInt()),
-            direction = if (lastTick == null) calculateTickDirection(lastPrice, bidPrice[0], askPrice[0]) else calculateTickDirection(lastPrice, lastTick.bidPrice[0], lastTick.askPrice[0]),
-            status = marketStatus,
-            yesterdayClose = formatDouble(data.preClosePrice),
-            yesterdaySettlementPrice = formatDouble(data.preSettlementPrice),
-            yesterdayOpenInterest = data.preOpenInterest.toInt(),
-            todayOpenPrice = formatDouble(data.openPrice),
-            todayClosePrice = formatDouble(data.closePrice),
-            todayHighPrice = formatDouble(data.highestPrice),
-            todayLowPrice = formatDouble(data.lowestPrice),
-            todayHighLimitPrice = formatDouble(data.upperLimitPrice),
-            todayLowLimitPrice = formatDouble(data.lowerLimitPrice),
-            todayAvgPrice = if (volumeMultiple == null || volumeMultiple == 0 || data.volume == 0) 0.0 else data.turnover / (volumeMultiple * data.volume),
-            todayVolume = data.volume,
-            todayTurnover = formatDouble(data.turnover),
-            todaySettlementPrice = formatDouble(data.settlementPrice),
-            todayOpenInterest = data.openInterest.toInt(),
-        )
-    }
-
-    /**
-     * 行情推送的 [Tick] 中很多字段可能是无效值，CTP 内用 [Double.MAX_VALUE] 表示，在此需要统一为 0.0
-     */
-    private inline fun formatDouble(input: Double): Double {
-        return if (input == Double.MAX_VALUE) 0.0 else input
-    }
-
-    /**
-     * 计算 Tick 方向
-     */
-    private fun calculateTickDirection(lastPrice: Double, bid1Price: Double, ask1Price: Double): TickDirection {
-        return when {
-            lastPrice >= ask1Price -> TickDirection.UP
-            lastPrice <= bid1Price -> TickDirection.DOWN
-            else -> TickDirection.STAY
-        }
-    }
-}
+internal data class QueryOrdersData(
+    val orderId: String? = null,
+    val code: String? = null,
+    val onlyUnfinished: Boolean = false,
+    val results: MutableList<Order> =  mutableListOf(),
+)
 
 /**
  * Order 的扩展字段，存储于 extras 中。格式为 exchangeId_orderSysId
@@ -221,7 +123,75 @@ object Translator {
 var Order.orderSysId: String
     get() = extras?.get("orderSysId") as String? ?: ""
     set(value) {
-        if (extras != null) {
-            extras!!["orderSysId"] = value
+        if (extras == null) {
+            extras = mutableMapOf()
         }
+        extras!!["orderSysId"] = value
     }
+
+/**
+ * Order 的扩展字段，以 String 格式存储于 extras 中。标记该 order 是否计算过挂单费用（仅限中金所）
+ */
+var Order.insertFeeCalculated: Boolean
+    get() = (extras?.get("insertFeeCalculated") as String? ?: "false").toBoolean()
+    set(value) {
+        if (extras == null) {
+            extras = mutableMapOf()
+        }
+        extras!!["insertFeeCalculated"] = value.toString()
+    }
+
+/**
+ * Order 的扩展字段，以 String 格式存储于 extras 中。标记该 order 是否计算过撤单费用（仅限中金所）
+ */
+var Order.cancelFeeCalculated: Boolean
+    get() = (extras?.get("cancelFeeCalculated") as String? ?: "false").toBoolean()
+    set(value) {
+        if (extras == null) {
+            extras = mutableMapOf()
+        }
+        extras!!["cancelFeeCalculated"] = value.toString()
+    }
+
+fun Order.deepCopy(): Order {
+    return copy(extras = extras?.toMutableMap())
+}
+
+/**
+ * 按挂单价从低到高的顺序插入 [order]
+ */
+internal fun MutableList<Order>.insert(order: Order) {
+    var i = indexOfFirst { it.price >= order.price }
+    i = if (i == -1) size else i
+    add(i, order)
+}
+
+/**
+ * 记录单一合约的双向持仓
+ */
+internal data class BiPosition(
+    var long: Position? = null,
+    var short: Position? = null,
+)
+
+/**
+ * 交易所 ID
+ */
+object ExchangeID {
+    const val SHFE = "SHFE"
+    const val INE = "INE"
+    const val CFFEX = "CFFEX"
+    const val DCE = "DCE"
+    const val CZCE = "CZCE"
+}
+
+/**
+ * 保证金价格类型
+ */
+internal enum class MarginPriceType {
+    YESTERDAY_SETTLEMENT_PRICE,
+    LAST_PRICE,
+    TODAY_SETTLEMENT_PRICE,
+    OPEN_PRICE,
+    MAX_SETTLEMENT_PRICE,
+}
