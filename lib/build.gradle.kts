@@ -1,51 +1,56 @@
-import org.gradle.kotlin.dsl.support.zipTo
-
 plugins {
     kotlin("jvm") version "1.5.21"
     kotlin("kapt") version "1.5.21"
     `java-library`
     `maven-publish`
     signing
-    id("org.jetbrains.dokka") version "1.4.32"
+    id("org.jetbrains.dokka") version "1.5.0"
     id("org.javamodularity.moduleplugin") version "1.8.7"
 }
 
 group = "org.rationalityfrontline.ktrader"
-version = "0.1.3-SNAPSHOT"
+version = "1.0.0"
 val NAME = "ktrader-broker-ctp"
 val DESC = "CTP implementation of KTrader-Broker-API"
-val GITHUB_REPO = "RationalityFrontline/ktrader-broker-ctp"
+val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
 
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = "broker-ctp-rf"
 val pluginVersion = version as String
-val pluginRequires = "0.1.0"
+val pluginRequires = "1.0.0"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"
 
 repositories {
-    mavenLocal()
     mavenCentral()
-    jcenter()
 }
 
-configurations.create("mrjar9")
-
 dependencies {
-    val pf4j = "org.pf4j:pf4j:3.7.0-SNAPSHOT"
-    val ktraderBrokerApi = "org.rationalityfrontline.ktrader:ktrader-broker-api:0.1.6-SNAPSHOT"
-    compileOnly(kotlin("stdlib"))
-    compileOnly(ktraderBrokerApi)
-    compileOnly(pf4j)
-    kapt(pf4j)
-    add("mrjar9", pf4j)
-    implementation("org.rationalityfrontline:jctp:6.6.1_P1-1.0.0") {
-        exclude(group = "org.slf4j", module = "slf4j-api")
+    val publishMaven = true  // 是否发布到 Maven 仓库
+    val depCoroutines = "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.1"
+    val depPf4j = "org.rationalityfrontline.workaround:pf4j:3.7.0"
+    val depKtraderBrokerApi = "org.rationalityfrontline.ktrader:ktrader-broker-api:1.0.0"
+    val depJctp = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.0"
+    if (publishMaven) {  // 发布到 Maven 仓库
+        implementation(kotlin("stdlib"))
+        api(depCoroutines)
+        api(depKtraderBrokerApi)
+        compileOnly(depPf4j)
+        implementation(depJctp)
+    } else {  // 发布为 ZIP 插件
+        compileOnly(kotlin("stdlib"))
+        compileOnly(depCoroutines)
+        compileOnly(depKtraderBrokerApi)
+        compileOnly(depPf4j)
+        kapt(depPf4j)
+        implementation(depJctp) {
+            exclude(group = "org.slf4j", module = "slf4j-api")
+        }
+        testImplementation(depCoroutines)
     }
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.1")
-    testImplementation(pf4j)
-    testImplementation(ktraderBrokerApi)
+    testImplementation(depPf4j)
+    testImplementation(depKtraderBrokerApi)
     testImplementation(platform("org.junit:junit-bom:5.7.0"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.7.0")
     testImplementation("org.slf4j:slf4j-api:1.7.30")
@@ -57,33 +62,6 @@ sourceSets.main {
 }
 
 tasks {
-    kapt{
-        javacOptions {
-            option("--module-path", compileJava.get().classpath.asPath)
-        }
-    }
-    register("moveModuleInfoInMRJARs") {
-        configurations["mrjar9"].files.forEach { mrjar9Jar ->
-            val tree = zipTree(mrjar9Jar)
-            val moduleInfoFile = tree.matching { include("module-info.class") }
-            val v9ModuleInfoFile = tree.matching { include("META-INF/versions/9/module-info.class") }
-            if (moduleInfoFile.isEmpty && !v9ModuleInfoFile.isEmpty) {
-                val unzipDir = file("$buildDir/tmp/mrjar9")
-                delete(unzipDir)
-                mkdir(unzipDir)
-                copy {
-                    from(tree, v9ModuleInfoFile.singleFile)
-                    into(unzipDir)
-                }
-                zipTo(mrjar9Jar, unzipDir)
-                println("Fixed $mrjar9Jar")
-            }
-        }
-    }
-    // See https://github.com/java9-modularity/gradle-modules-plugin/issues/162 and https://youtrack.jetbrains.com/issue/KT-32202
-    afterEvaluate {
-        tasks["kaptKotlin"].dependsOn("moveModuleInfoInMRJARs")
-    }
     dokkaHtml {
         outputDirectory.set(buildDir.resolve("javadoc"))
         moduleName.set("KTrader-Broker-CTP")
@@ -155,8 +133,8 @@ publishing {
                     developer {
                         name.set("RationalityFrontline")
                         email.set("rationalityfrontline@gmail.com")
-                        organization.set("RationalityFrontline")
-                        organizationUrl.set("https://github.com/RationalityFrontline")
+                        organization.set("ktrader-tech")
+                        organizationUrl.set("https://github.com/ktrader-tech")
                     }
                 }
                 scm {

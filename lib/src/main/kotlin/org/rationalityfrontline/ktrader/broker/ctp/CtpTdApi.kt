@@ -145,13 +145,14 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
         tdApi.apply {
             RegisterSpi(tdSpi)
             // 默认 RESUME 订阅私有流
-            val resumeType = when (config.flowSubscribeType.uppercase(Locale.getDefault())) {
-                "RESTART" -> THOST_TE_RESUME_TYPE.THOST_TERT_RESTART
-                "RESUME" -> THOST_TE_RESUME_TYPE.THOST_TERT_RESUME
-                "QUICK" -> THOST_TE_RESUME_TYPE.THOST_TERT_QUICK
-                else -> THOST_TE_RESUME_TYPE.THOST_TERT_QUICK
-            }
-            SubscribePrivateTopic(resumeType)
+//            val resumeType = when (config.flowSubscribeType.uppercase(Locale.getDefault())) {
+//                "RESTART" -> THOST_TE_RESUME_TYPE.THOST_TERT_RESTART
+//                "RESUME" -> THOST_TE_RESUME_TYPE.THOST_TERT_RESUME
+//                "QUICK" -> THOST_TE_RESUME_TYPE.THOST_TERT_QUICK
+//                else -> THOST_TE_RESUME_TYPE.THOST_TERT_QUICK
+//            }
+//            SubscribePrivateTopic(resumeType)
+            SubscribePrivateTopic(THOST_TE_RESUME_TYPE.THOST_TERT_QUICK)
             // RESTART 订阅公有流，用于获取合约交易状态，参见 tdSpi.OnRtnInstrumentStatus
             SubscribePublicTopic(THOST_TE_RESUME_TYPE.THOST_TERT_RESTART)
             config.tdFronts.forEach { tFront ->

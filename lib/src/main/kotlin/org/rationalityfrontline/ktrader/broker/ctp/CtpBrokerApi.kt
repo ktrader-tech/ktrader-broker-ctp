@@ -65,32 +65,20 @@ class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config,
     /**
      * [useCache] 与 [retry] 无效，总是查询本地维护的数据，CTP 无此查询接口
      */
-    override suspend fun querySubscriptions(useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): List<String> {
+    override suspend fun querySubscriptions(useCache: Boolean, extras: Map<String, Any>?): List<String> {
         return mdApi.querySubscriptions(useCache, extras)
     }
 
-    override suspend fun queryLastTick(code: String, useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): Tick? {
-        return if (retry) {
-            runWithRetry({ tdApi.queryLastTick(code, useCache, extras) })
-        } else {
-            tdApi.queryLastTick(code, useCache, extras)
-        }
+    override suspend fun queryLastTick(code: String, useCache: Boolean, extras: Map<String, Any>?): Tick? {
+        return runWithRetry({ tdApi.queryLastTick(code, useCache, extras) })
     }
 
-    override suspend fun queryInstrument(code: String, useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): Instrument? {
-        return if (retry) {
-            runWithRetry({ tdApi.queryInstrument(code, useCache, extras) })
-        } else {
-            tdApi.queryInstrument(code, useCache, extras)
-        }
+    override suspend fun queryInstrument(code: String, useCache: Boolean, extras: Map<String, Any>?): Instrument? {
+        return runWithRetry({ tdApi.queryInstrument(code, useCache, extras) })
     }
 
-    override suspend fun queryAllInstruments(useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): List<Instrument> {
-        return if (retry) {
-            runWithRetry({ tdApi.queryAllInstruments(useCache, extras) })
-        } else {
-            tdApi.queryAllInstruments(useCache, extras)
-        }
+    override suspend fun queryAllInstruments(useCache: Boolean, extras: Map<String, Any>?): List<Instrument> {
+        return runWithRetry({ tdApi.queryAllInstruments(useCache, extras) })
     }
 
     override fun insertOrder(
@@ -109,60 +97,32 @@ class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config,
         tdApi.cancelOrder(orderId, extras)
     }
 
-    override suspend fun queryOrder(orderId: String, useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): Order? {
-        return if (retry){
-            runWithRetry({ tdApi.queryOrder(orderId, useCache, extras) })
-        } else {
-            tdApi.queryOrder(orderId, useCache, extras)
-        }
+    override suspend fun queryOrder(orderId: String, useCache: Boolean, extras: Map<String, Any>?): Order? {
+        return runWithRetry({ tdApi.queryOrder(orderId, useCache, extras) })
     }
 
-    override suspend fun queryOrders(code: String?, onlyUnfinished: Boolean, useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): List<Order> {
-        return if (retry) {
-            runWithRetry({ tdApi.queryOrders(code, onlyUnfinished, useCache, extras) })
-        } else {
-            tdApi.queryOrders(code, onlyUnfinished, useCache, extras)
-        }
+    override suspend fun queryOrders(code: String?, onlyUnfinished: Boolean, useCache: Boolean, extras: Map<String, Any>?): List<Order> {
+        return runWithRetry({ tdApi.queryOrders(code, onlyUnfinished, useCache, extras) })
     }
 
-    override suspend fun queryTrade(tradeId: String, useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): Trade? {
-        return if (retry) {
-            runWithRetry({ tdApi.queryTrade(tradeId, useCache, extras) })
-        } else {
-            tdApi.queryTrade(tradeId, useCache, extras)
-        }
+    override suspend fun queryTrade(tradeId: String, useCache: Boolean, extras: Map<String, Any>?): Trade? {
+        return runWithRetry({ tdApi.queryTrade(tradeId, useCache, extras) })
     }
 
-    override suspend fun queryTrades(code: String?, orderId: String?, useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): List<Trade> {
-        return if (retry) {
-            runWithRetry({ tdApi.queryTrades(code, orderId, useCache, extras) })
-        } else {
-            tdApi.queryTrades(code, orderId, useCache, extras)
-        }
+    override suspend fun queryTrades(code: String?, orderId: String?, useCache: Boolean, extras: Map<String, Any>?): List<Trade> {
+        return runWithRetry({ tdApi.queryTrades(code, orderId, useCache, extras) })
     }
 
-    override suspend fun queryAssets(useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): Assets {
-        return if (retry) {
-            runWithRetry({ tdApi.queryAssets(useCache, extras) })
-        } else {
-            tdApi.queryAssets(useCache, extras)
-        }
+    override suspend fun queryAssets(useCache: Boolean, extras: Map<String, Any>?): Assets {
+        return runWithRetry({ tdApi.queryAssets(useCache, extras) })
     }
 
-    override suspend fun queryPosition(code: String, direction: Direction, useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): Position? {
-        return if (retry) {
-            runWithRetry({ tdApi.queryPosition(code, direction, useCache, extras) })
-        } else {
-            tdApi.queryPosition(code, direction, useCache, extras)
-        }
+    override suspend fun queryPosition(code: String, direction: Direction, useCache: Boolean, extras: Map<String, Any>?): Position? {
+        return runWithRetry({ tdApi.queryPosition(code, direction, useCache, extras) })
     }
 
-    override suspend fun queryPositions(code: String?, useCache: Boolean, retry: Boolean, extras: Map<String, Any>?): List<Position> {
-        return if (retry) {
-            runWithRetry({ tdApi.queryPositions(code, useCache, extras) })
-        } else {
-            tdApi.queryPositions(code, useCache, extras)
-        }
+    override suspend fun queryPositions(code: String?, useCache: Boolean, extras: Map<String, Any>?): List<Position> {
+        return runWithRetry({ tdApi.queryPositions(code, useCache, extras) })
     }
 
     override suspend fun prepareFeeCalculation(codes: Collection<String>?, extras: Map<String, Any>?) {

@@ -24,7 +24,6 @@ class CtpTest {
         val ctpConfig = mutableMapOf<String, Any>().apply {
             putAll(CtpAccounts.huaTaiP)
             put("cachePath", "./build/flow/")
-            put("flowSubscribeType", "QUICK")
             put("disableAutoSubscribe", false)
             put("disableFeeCalculation", false)
         }

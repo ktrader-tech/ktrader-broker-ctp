@@ -149,7 +149,7 @@ internal object Translator {
                     optionsType = when (insField.optionsType) {
                         jctpConstants.THOST_FTDC_CP_CallOptions -> OptionsType.CALL
                         jctpConstants.THOST_FTDC_CP_PutOptions -> OptionsType.PUT
-                        else -> null
+                        else -> OptionsType.UNKNOWN
                     },
                     optionsUnderlyingCode = "${insField.exchangeID}.${insField.underlyingInstrID}",
                     optionsStrikePrice = insField.strikePrice
