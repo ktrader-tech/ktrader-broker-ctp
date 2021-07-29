@@ -21,12 +21,23 @@ class CtpTest {
                 }
             }
         }
-        val ctpConfig = mutableMapOf<String, Any>().apply {
-            putAll(CtpAccounts.huaTaiP)
-            put("cachePath", "./build/flow/")
-            put("disableAutoSubscribe", false)
-            put("disableFeeCalculation", false)
-        }
+        val ctpConfig = mutableMapOf(
+            "mdFronts" to listOf(
+                "tcp://0.0.0.0:0"
+            ),
+            "tdFronts" to listOf(
+                "tcp://0.0.0.0:0"
+            ),
+            "investorId" to "123456",
+            "password" to "123456",
+            "brokerId" to "1234",
+            "appId" to "rf_ktrader_1.0.0",
+            "authCode" to "ASDFGHJKL",
+            "cachePath" to "./build/flow/",
+            "disableAutoSubscribe" to false,
+            "disableFeeCalculation" to false,
+        )
+//        ctpConfig.putAll(CtpAccounts.huaTaiP)
         val ctpApi = CtpBrokerApi(ctpConfig, KEVENT)
         runBlocking {
             ctpApi.connect()

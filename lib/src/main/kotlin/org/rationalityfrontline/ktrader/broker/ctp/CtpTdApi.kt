@@ -74,7 +74,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 缓存的合约信息，key 为合约 code
      */
-    val instruments: MutableMap<String, Instrument> = mutableMapOf()
+    val instruments: MutableMap<String, Security> = mutableMapOf()
     /**
      * 品种代码表，key 为合约 code，value 为品种代码(productId)。用于从 code 快速映射到 [productStatusMap]
      */
@@ -421,7 +421,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 查询某一特定合约的信息
      */
-    suspend fun queryInstrument(code: String, useCache: Boolean = true, extras: Map<String, Any>? = null): Instrument? {
+    suspend fun queryInstrument(code: String, useCache: Boolean = true, extras: Map<String, Any>? = null): Security? {
         if (useCache) {
             val cachedInstrument = instruments[code]
             if (cachedInstrument != null) {
@@ -447,13 +447,13 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 查询全市场合约的信息
      */
-    suspend fun queryAllInstruments(useCache: Boolean = true, extras: Map<String, Any>? = null): List<Instrument> {
+    suspend fun queryAllInstruments(useCache: Boolean = true, extras: Map<String, Any>? = null): List<Security> {
         if (useCache && instruments.isNotEmpty()) return instruments.values.toList()
         val qryField = CThostFtdcQryInstrumentField()
         val requestId = nextRequestId()
         return runWithResultCheck({ tdApi.ReqQryInstrument(qryField, requestId) }, {
             suspendCoroutine { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<Instrument>())
+                requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<Security>())
             }
         })
     }
@@ -704,7 +704,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             })
         } else {
             val instrument = instruments[code]
-            if (instrument != null && instrument.marginRate == null && instrument.type == InstrumentType.FUTURES) {
+            if (instrument != null && instrument.marginRate == null && instrument.type == SecurityType.FUTURES) {
                 val qryField = CThostFtdcQryInstrumentMarginRateField().apply {
                     brokerID = config.brokerId
                     investorID = config.investorId
@@ -740,7 +740,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             })
         } else {
             val instrument = instruments[code]
-            if (instrument != null && instrument.marginRate == null && instrument.type == InstrumentType.OPTIONS) {
+            if (instrument != null && instrument.marginRate == null && instrument.type == SecurityType.OPTIONS) {
                 val qryField = CThostFtdcQryOptionInstrTradeCostField().apply {
                     brokerID = config.brokerId
                     investorID = config.investorId
@@ -775,7 +775,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             })
         } else {
             val instrument = instruments[code]
-            if (instrument != null && instrument.commissionRate == null && instrument.type == InstrumentType.FUTURES) {
+            if (instrument != null && instrument.commissionRate == null && instrument.type == SecurityType.FUTURES) {
                 val qryField = CThostFtdcQryInstrumentCommissionRateField().apply {
                     brokerID = config.brokerId
                     investorID = config.investorId
@@ -829,7 +829,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             })
         } else {
             val instrument = instruments[code]
-            if (instrument != null && instrument.commissionRate == null && instrument.type == InstrumentType.OPTIONS) {
+            if (instrument != null && instrument.commissionRate == null && instrument.type == SecurityType.OPTIONS) {
                 val qryField = CThostFtdcQryOptionInstrCommRateField().apply {
                     brokerID = config.brokerId
                     investorID = config.investorId
@@ -850,7 +850,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 获取缓存的期货/期权手续费率，如果没有，则查询后再获取
      */
-    private fun getOrQueryCommissionRate(instrument: Instrument): CommissionRate? {
+    private fun getOrQueryCommissionRate(instrument: Security): CommissionRate? {
         if (config.disableFeeCalculation) return null
         if (instrument.commissionRate == null) {
             runBlocking { prepareFeeCalculation(instrument.code, false) }
@@ -861,7 +861,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 获取缓存的期货保证金率，如果没有，则查询后再获取
      */
-    private fun getOrQueryMarginRate(instrument: Instrument): MarginRate? {
+    private fun getOrQueryMarginRate(instrument: Security): MarginRate? {
         if (config.disableFeeCalculation) return null
         if (instrument.marginRate == null) {
             runBlocking { prepareFeeCalculation(instrument.code, false) }
@@ -882,7 +882,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             }
         }
         when (instrument.type) {
-            InstrumentType.FUTURES -> {
+            SecurityType.FUTURES -> {
                 if (instrument.commissionRate == null) {
                     runWithRetry({ queryFuturesCommissionRate(code) }) { e -> handleException(e, "查询期货手续费率出错：$code, $e") }
                 }
@@ -890,7 +890,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     runWithRetry({ queryFuturesMarginRate(code) }) { e -> handleException(e, "查询期货保证金率出错：$code, $e") }
                 }
             }
-            InstrumentType.OPTIONS -> {
+            SecurityType.OPTIONS -> {
                 if (instrument.commissionRate == null) {
                     runWithRetry({ queryOptionsCommissionRate(code) }) { e -> handleException(e, "查询期权手续费率出错：$code, $e") }
                 }
@@ -962,7 +962,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 计算期货保证金
      */
-    private fun calculateFuturesMargin(instrument: Instrument, direction: Direction, yesterdayVolume: Int, todayVolume: Int, avgOpenPrice: Double, fallback: Double): Double {
+    private fun calculateFuturesMargin(instrument: Security, direction: Direction, yesterdayVolume: Int, todayVolume: Int, avgOpenPrice: Double, fallback: Double): Double {
         val marginRate = getOrQueryMarginRate(instrument) ?: return fallback
         val (tick, isLatestTick) = getOrQueryTick(instrument.code)
         if (tick == null) {
@@ -1002,7 +1002,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 计算期权保证金
      */
-    private fun calculateOptionsMargin(instrument: Instrument, direction: Direction, volume: Int, avgOpenPrice: Double, fallback: Double, isOpen: Boolean): Double {
+    private fun calculateOptionsMargin(instrument: Security, direction: Direction, volume: Int, avgOpenPrice: Double, fallback: Double, isOpen: Boolean): Double {
         when (direction) {
             Direction.LONG -> {  // 买方
                 return if (isOpen) avgOpenPrice * instrument.volumeMultiple else 0.0
@@ -1041,7 +1041,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      */
     fun calculatePosition(position: Position, calculateValue: Boolean = true, extras: Map<String, Any>? = null) {
         val instrument = instruments[position.code] ?: return
-        if (instrument.type == InstrumentType.FUTURES || instrument.type == InstrumentType.OPTIONS) {
+        if (instrument.type == SecurityType.FUTURES || instrument.type == SecurityType.OPTIONS) {
             // 计算开仓均价
             if (position.volume != 0 && instrument.volumeMultiple != 0) {
                 position.avgOpenPrice = position.openCost / position.volume / instrument.volumeMultiple
@@ -1058,11 +1058,11 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             // 计算保证金
             if (calculateValue) {
                 when (instrument.type) {
-                    InstrumentType.FUTURES -> {
+                    SecurityType.FUTURES -> {
                         // 这里传入的开仓成本是全体开仓成本，而不是今仓开仓成本，这导致在保证金价格类型为 OPEN_PRICE 时的保证金计算会不准确
                         position.value = calculateFuturesMargin(instrument, position.direction, position.yesterdayVolume, position.todayVolume, position.avgOpenPrice, position.value)
                     }
-                    InstrumentType.OPTIONS -> {
+                    SecurityType.OPTIONS -> {
                         position.value = calculateOptionsMargin(instrument, position.direction, position.volume, position.avgOpenPrice, position.value, false)
                     }
                     else -> Unit
@@ -1076,7 +1076,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      */
     fun calculateOrder(order: Order, extras: Map<String, Any>? = null) {
         val instrument = instruments[order.code] ?: return
-        if (instrument.type == InstrumentType.FUTURES || instrument.type == InstrumentType.OPTIONS) {
+        if (instrument.type == SecurityType.FUTURES || instrument.type == SecurityType.OPTIONS) {
             // 计算成交均价
             if (order.filledVolume != 0 && instrument.volumeMultiple != 0) {
                 order.avgFillPrice = order.turnover / order.filledVolume / instrument.volumeMultiple
@@ -1085,12 +1085,12 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             val restVolume = order.volume - order.filledVolume
             if (order.offset == OrderOffset.OPEN && restVolume > 0) {
                 when (instrument.type) {
-                    InstrumentType.FUTURES -> order.frozenCash = calculateFuturesMargin(instrument, order.direction, 0, restVolume, order.price, 0.0)
-                    InstrumentType.OPTIONS -> order.frozenCash = calculateOptionsMargin(instrument, order.direction, restVolume, order.price, 0.0, true)
+                    SecurityType.FUTURES -> order.frozenCash = calculateFuturesMargin(instrument, order.direction, 0, restVolume, order.price, 0.0)
+                    SecurityType.OPTIONS -> order.frozenCash = calculateOptionsMargin(instrument, order.direction, restVolume, order.price, 0.0, true)
                 }
             }
             // 如果是中金所股指期货，计算申报手续费
-            if (order.code.startsWith(ExchangeID.CFFEX) && instrument.type == InstrumentType.FUTURES) {
+            if (order.code.startsWith(ExchangeID.CFFEX) && instrument.type == SecurityType.FUTURES) {
                 val com = getOrQueryCommissionRate(instrument)
                 if (com != null) {
                     when (order.status) {
@@ -1120,8 +1120,8 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     fun calculateTrade(trade: Trade, extras: Map<String, Any>? = null) {
         val instrument = instruments[trade.code] ?: return
         when (instrument.type) {
-            InstrumentType.FUTURES,
-            InstrumentType.OPTIONS, -> {
+            SecurityType.FUTURES,
+            SecurityType.OPTIONS, -> {
                 if (trade.turnover == 0.0) {
                     trade.turnover = trade.volume * trade.price * instrument.volumeMultiple
                 }
@@ -1908,7 +1908,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             checkRspInfo(pRspInfo, {
                 // 如果是查询单个合约
                 if (reqData is String) {
-                    val con = request.continuation as Continuation<Instrument?>
+                    val con = request.continuation as Continuation<Security?>
                     if (instrument == null) {
                         con.resume(null)
                         requestMap.remove(nRequestID)
@@ -1924,10 +1924,10 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                         }
                     }
                 } else { // 如果是查询多个合约
-                    val insList = request.data as MutableList<Instrument>
+                    val insList = request.data as MutableList<Security>
                     if (instrument != null) insList.add(instrument)
                     if (bIsLast) {
-                        (request.continuation as Continuation<List<Instrument>>).resume(insList)
+                        (request.continuation as Continuation<List<Security>>).resume(insList)
                         requestMap.remove(nRequestID)
                     }
                 }
@@ -2117,7 +2117,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     // 如果是品种代码，更新 instruments 中所有该品种的手续费
                     if (instrument == null) {
                         val instrumentList = instruments.values.filter {
-                            if (it.type != InstrumentType.FUTURES) return@filter false
+                            if (it.type != SecurityType.FUTURES) return@filter false
                             if (it.commissionRate != null) return@filter false
                             return@filter it.productId == code
                         }
@@ -2168,7 +2168,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 // 目前只有 IC, IH, IF 能查到挂单撤单手续费，并且每个品种会返回 3 条 hedgeFlag 分别为 1, 3, 2 的其余字段相同的记录
                 if (pOrderCommRate != null && pOrderCommRate.hedgeFlag == THOST_FTDC_HF_Speculation) {
                     val commissionList = instruments.values.filter {
-                        if (it.type != InstrumentType.FUTURES) return@filter false
+                        if (it.type != SecurityType.FUTURES) return@filter false
                         if (it.commissionRate == null) return@filter false
                         return@filter it.productId == pOrderCommRate.instrumentID
                     }.map { it.commissionRate!! }
@@ -2205,7 +2205,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     var optionsType = OptionsType.UNKNOWN
                     val commissionRate = Translator.optionsCommissionRateC2A(pCommissionRate)
                     val instrumentList = instruments.values.filter {
-                        if (it.type != InstrumentType.OPTIONS) return@filter false
+                        if (it.type != SecurityType.OPTIONS) return@filter false
                         if (it.commissionRate != null) return@filter false
                         if (optionsType != OptionsType.UNKNOWN && optionsType != it.optionsType) return@filter false
                         return@filter it.productId == pCommissionRate.instrumentID

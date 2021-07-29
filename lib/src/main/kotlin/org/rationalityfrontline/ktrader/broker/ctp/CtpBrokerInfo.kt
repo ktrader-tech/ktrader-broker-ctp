@@ -22,7 +22,7 @@ object CtpBrokerInfo {
     val methodExtras: List<Pair<String, String>> = listOf(
         Pair("subscribeMarketData/unsubscribeMarketData/subscribeAllMarketData/unsubscribeAllMarketData", "[isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】"),
         Pair("insertOrder", "[minVolume: Int]【最小成交量。仅当下单类型为 OrderType.FAK 时生效】"),
-        Pair("queryInstrument", "[queryFee: Boolean = false]【是否查询保证金率及手续费率，如果之前没查过，可能会耗时。当 useCache 为 false 时无效】"),
+        Pair("querySecurity", "[queryFee: Boolean = false]【是否查询保证金率及手续费率，如果之前没查过，可能会耗时。当 useCache 为 false 时无效】"),
     )
 
     fun parseConfig(config: Map<String, Any>): CtpConfig {

@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "org.rationalityfrontline.ktrader"
-version = "1.0.0"
+version = "1.1.0"
 val NAME = "ktrader-broker-ctp"
 val DESC = "CTP implementation of KTrader-Broker-API"
 val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
@@ -17,7 +17,7 @@ val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = "broker-ctp-rf"
 val pluginVersion = version as String
-val pluginRequires = "1.0.0"
+val pluginRequires = "1.1.0"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"
@@ -30,7 +30,7 @@ dependencies {
     val publishMaven = true  // 是否发布到 Maven 仓库
     val depCoroutines = "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.1"
     val depPf4j = "org.rationalityfrontline.workaround:pf4j:3.7.0"
-    val depKtraderBrokerApi = "org.rationalityfrontline.ktrader:ktrader-broker-api:1.0.0"
+    val depKtraderBrokerApi = "org.rationalityfrontline.ktrader:ktrader-broker-api:$pluginRequires"
     val depJctp = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.0"
     if (publishMaven) {  // 发布到 Maven 仓库
         implementation(kotlin("stdlib"))

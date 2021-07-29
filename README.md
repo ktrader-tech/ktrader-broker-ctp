@@ -3,11 +3,11 @@
 ![platform](https://img.shields.io/badge/platform-windows%7Clinux-green)
 [![Apache License 2.0](https://img.shields.io/github/license/ktrader-tech/ktrader-broker-ctp)](https://github.com/ktrader-tech/ktrader-broker-ctp/blob/master/LICENSE)
 
-[KTrader-Broker-API](https://github.com/ktrader-tech/ktrader-broker-api) 的 CTP 实现。可以作为插件使用，也可以作为类库使用。
+[KTrader-Broker-API](https://github.com/ktrader-tech/ktrader-broker-api) 的 CTP 实现。可以作为类库使用，也可以作为插件使用。
 
 ## Download
 
-**Gradle Kotlin DSL:**
+**Gradle:**
 
 ```kotlin
 repositories {
@@ -15,7 +15,7 @@ repositories {
 }
 
 dependencies {
-    implementation("org.rationalityfrontline.ktrader:ktrader-broker-ctp:1.0.0")
+    implementation("org.rationalityfrontline.ktrader:ktrader-broker-ctp:1.1.0")
 }
 ```
 
@@ -25,7 +25,7 @@ dependencies {
 <dependency>
     <groupId>org.rationalityfrontline.ktrader</groupId>
     <artifactId>ktrader-broker-ctp</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 

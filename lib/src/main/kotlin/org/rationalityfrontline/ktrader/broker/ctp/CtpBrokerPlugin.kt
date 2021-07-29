@@ -5,16 +5,7 @@ import org.pf4j.PluginWrapper
 import org.rationalityfrontline.jctp.jctpJNI
 
 class CtpBrokerPlugin(wrapper: PluginWrapper) : Plugin(wrapper) {
-    override fun start() {
-        println("CtpBrokerPlugin start")
-    }
-
-    override fun stop() {
-        println("CtpBrokerPlugin stop")
-    }
-
     override fun delete() {
-        println("CtpBrokerPlugin delete")
         jctpJNI.release()
     }
 }

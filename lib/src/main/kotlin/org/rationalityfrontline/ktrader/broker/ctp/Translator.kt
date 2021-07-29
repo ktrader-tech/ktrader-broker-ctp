@@ -125,16 +125,16 @@ internal object Translator {
         }
     }
 
-    fun instrumentC2A(insField: CThostFtdcInstrumentField, onTimeParseError: (Exception) -> Unit): Instrument? {
+    fun instrumentC2A(insField: CThostFtdcInstrumentField, onTimeParseError: (Exception) -> Unit): Security? {
         return try {
             val type = when (insField.productClass) {
-                jctpConstants.THOST_FTDC_PC_Futures -> InstrumentType.FUTURES
+                jctpConstants.THOST_FTDC_PC_Futures -> SecurityType.FUTURES
                 jctpConstants.THOST_FTDC_PC_Options,
-                jctpConstants.THOST_FTDC_PC_SpotOption, -> InstrumentType.OPTIONS
-                else -> InstrumentType.UNKNOWN
+                jctpConstants.THOST_FTDC_PC_SpotOption, -> SecurityType.OPTIONS
+                else -> SecurityType.UNKNOWN
             }
-            if (type == InstrumentType.UNKNOWN) null else {
-                Instrument(
+            if (type == SecurityType.UNKNOWN) null else {
+                Security(
                     code = "${insField.exchangeID}.${insField.instrumentID}",
                     type = type,
                     productId = insField.productID,
