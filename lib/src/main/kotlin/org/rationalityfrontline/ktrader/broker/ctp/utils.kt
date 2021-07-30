@@ -78,7 +78,7 @@ internal suspend inline fun <T> runWithResultCheck(action: () -> Int, onSuccess:
  * 发送用 [runWithResultCheck] 包装过后的 CTP 请求，如果遇到 CTP 柜台处流控，则不断自动间隔 10ms 重新请求
  * @param action 用 [runWithResultCheck] 包装过后的 CTP 请求，返回的是请求结果
  */
-suspend fun <T> runWithRetry(action: suspend () -> T, onError: (Exception) -> T = { e -> throw e }): T {
+internal suspend fun <T> runWithRetry(action: suspend () -> T, onError: (Exception) -> T = { e -> throw e }): T {
     return try {
         action()
     } catch (e: Exception) {

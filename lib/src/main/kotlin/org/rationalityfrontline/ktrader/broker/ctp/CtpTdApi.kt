@@ -19,7 +19,7 @@ import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import kotlin.math.max
 
-class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) {
+internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) {
     private val tdApi: CThostFtdcTraderApi
     private val tdSpi: CtpTdSpi
     /**
@@ -1299,6 +1299,9 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                                 Direction.LONG -> unfinishedLongOrders.insert(it)
                                 Direction.SHORT -> unfinishedShortOrders.insert(it)
                             }
+                        }
+                        if (it.status == OrderStatus.CANCELED) {
+                            cancelStatistics[it.code] = cancelStatistics.getOrDefault(it.code, 0) + 1
                         }
                     }
                 }) { e ->

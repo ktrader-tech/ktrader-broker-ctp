@@ -36,7 +36,7 @@ object CtpBrokerInfo {
             authCode = config["authCode"] as String? ?: "",
             userProductInfo = config["userProductInfo"] as String? ?: "",
             cachePath = config["cachePath"] as String? ?: "",
-            flowSubscribeType = config["flowSubscribeType"] as String? ?: "",
+//            flowSubscribeType = config["flowSubscribeType"] as String? ?: "",
             disableAutoSubscribe = config["disableAutoSubscribe"] == true,
             disableFeeCalculation = config["disableFeeCalculation"] == true,
         )
@@ -53,7 +53,7 @@ data class CtpConfig(
     val authCode: String,
     val userProductInfo: String,
     val cachePath: String,
-    val flowSubscribeType: String,
+//    val flowSubscribeType: String,
     val disableAutoSubscribe: Boolean,
     val disableFeeCalculation: Boolean,
 )

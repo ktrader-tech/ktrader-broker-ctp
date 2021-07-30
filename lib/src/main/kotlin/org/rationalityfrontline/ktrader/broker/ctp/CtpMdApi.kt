@@ -18,7 +18,7 @@ import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import kotlin.math.min
 
-class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) {
+internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) {
     private val mdApi: CThostFtdcMdApi
     private val mdSpi: CtpMdSpi
     /**
