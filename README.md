@@ -159,7 +159,9 @@ dependencies {
 
 [Releases](https://github.com/ktrader-tech/ktrader-broker-ctp/releases)
 
-如果需要使用其它版本的 JCTP，将插件压缩包内 lib 目录下的 jctp-xxxx.jar 替换成你所需要的版本的 jar 即可。JCTP jar 下载地址：[Maven Repository](https://repo1.maven.org/maven2/org/rationalityfrontline/jctp/)
+如果需要使用其它版本的 JCTP，将插件压缩包内 lib 目录下的 jctp-xxxx.jar 替换成你所需要的版本的 jar 即可。
+
+JCTP jar 下载地址：[Maven Repository](https://repo1.maven.org/maven2/org/rationalityfrontline/jctp/)
 
 ## License
 
