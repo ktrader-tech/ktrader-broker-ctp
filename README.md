@@ -139,7 +139,7 @@ repositories {
 }
 
 dependencies {
-    implementation("org.rationalityfrontline.ktrader:ktrader-broker-ctp:1.1.1")
+    implementation("org.rationalityfrontline.ktrader:ktrader-broker-ctp:1.1.2")
     // 如果需要使用其它版本的 JCTP，取消注释下面一行，并填入自己需要的版本号
 //    implementation("org.rationalityfrontline:jctp") { version { strictly("6.6.1_P1_CP-1.0.0") } }
 }
@@ -151,11 +151,11 @@ dependencies {
 <dependency>
     <groupId>org.rationalityfrontline.ktrader</groupId>
     <artifactId>ktrader-broker-ctp</artifactId>
-    <version>1.1.1</version>
+    <version>1.1.2</version>
 </dependency>
 ```
 
-插件下载：
+**插件下载：**
 
 [Releases](https://github.com/ktrader-tech/ktrader-broker-ctp/releases)
 

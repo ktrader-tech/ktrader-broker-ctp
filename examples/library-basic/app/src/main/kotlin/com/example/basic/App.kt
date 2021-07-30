@@ -32,7 +32,7 @@ fun main() {
         val brokerEvent = event.data
         when (brokerEvent.type) {
             // Tick 推送
-            BrokerEventType.MD_TICK -> {
+            BrokerEventType.TICK -> {
                 val tick = brokerEvent.data as Tick
                 // 当某合约触及涨停价时，以跌停价挂1手多单开仓限价委托单
                 if (tick.lastPrice == tick.todayHighLimitPrice) {

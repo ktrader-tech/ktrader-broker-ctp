@@ -219,7 +219,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val errorInfo = "${pRspInfo.errorMsg}, requestId=$nRequestID, isLast=$bIsLast"
                 val connectRequests = requestMap.values.filter { it.tag == "connect" }
                 if (connectRequests.isEmpty()) {
-                    postBrokerEvent(BrokerEventType.MD_ERROR, errorInfo)
+                    postBrokerEvent(BrokerEventType.ERROR, "【行情接口发生错误】$errorInfo")
                 } else {
                     resumeRequestsWithException("connect", errorInfo)
                 }
@@ -275,7 +275,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (subscriptions.isNotEmpty() && tradingDay == pRspUserLogin.tradingDay) {
                     runBlocking {
                         runWithRetry({ subscribeMarketData(subscriptions.toList(), mapOf("isForce" to true)) }, { e ->
-                            postBrokerEvent(BrokerEventType.MD_ERROR, "重连后自动订阅行情失败：$e")
+                            postBrokerEvent(BrokerEventType.ERROR, "【行情接口发生错误】重连后自动订阅行情失败：$e")
                         })
                     }
                 }
@@ -284,7 +284,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     subscriptions.clear()
                     tradingDay = pRspUserLogin.tradingDay
                 }
-                postBrokerEvent(BrokerEventType.MD_USER_LOGGED_IN, Unit)
+                postBrokerEvent(BrokerEventType.MD_LOGGED_IN, Unit)
                 resumeRequests("connect", Unit)
             }, { errorCode, errorMsg ->
                 resumeRequestsWithException("connect", "请求用户登录失败：$errorMsg ($errorCode)")
@@ -357,11 +357,11 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             val code = getCode(data.instrumentID)
             val lastTick = lastTicks[code]
             val newTick = Translator.tickC2A(code, data, lastTick, tdApi.instruments[code]?.volumeMultiple, tdApi.getInstrumentStatus(code)) { e ->
-                postBrokerEvent(BrokerEventType.MD_ERROR, "OnRtnDepthMarketData updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
+                postBrokerEvent(BrokerEventType.ERROR, "【行情接口发生错误】OnRtnDepthMarketData updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
             }
             lastTicks[code] = newTick
             // 过滤掉订阅时自动推送的第一笔数据
-            if (lastTick != null) postBrokerEvent(BrokerEventType.MD_TICK, newTick)
+            if (lastTick != null) postBrokerEvent(BrokerEventType.TICK, newTick)
         }
     }
 }

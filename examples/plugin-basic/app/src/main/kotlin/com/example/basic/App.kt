@@ -52,7 +52,7 @@ fun main() {
             val brokerEvent = event.data
             when (brokerEvent.type) {
                 // Tick 推送
-                BrokerEventType.MD_TICK -> {
+                BrokerEventType.TICK -> {
                     val tick = brokerEvent.data as Tick
                 }
                 // 其它事件（网络连接、订单回报、成交回报等）

@@ -873,7 +873,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             if (throwException){
                 throw e
             } else {
-                postBrokerEvent(BrokerEventType.TD_ERROR, "查询期货手续费率出错：$code, $e")
+                postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】查询期货手续费率出错：$code, $e")
             }
         }
         when (instrument.type) {
@@ -930,7 +930,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 try {
                     runBlocking { mdApi.subscribeMarketData(listOf(code)) }
                 } catch (e: Exception) {
-                    postBrokerEvent(BrokerEventType.TD_ERROR, "计算保证金时订阅合约行情失败：$code, $e")
+                    postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】计算保证金时订阅合约行情失败：$code, $e")
                 }
             } else {
                 isLatestTick = true
@@ -947,7 +947,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         isLatestTick = true
                     }
                 } catch (e: Exception) {
-                    postBrokerEvent(BrokerEventType.TD_ERROR, "计算保证金时查询合约最新行情失败：$code, $e")
+                    postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】计算保证金时查询合约最新行情失败：$code, $e")
                 }
             }
         }
@@ -1225,7 +1225,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val errorInfo = "${pRspInfo.errorMsg}, requestId=$nRequestID, isLast=$bIsLast"
                 val connectRequests = requestMap.values.filter { it.tag == "connect" }
                 if (connectRequests.isEmpty()) {
-                    postBrokerEvent(BrokerEventType.TD_ERROR, errorInfo)
+                    postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】$errorInfo")
                 } else {
                     resumeRequestsWithException("connect", errorInfo)
                 }
@@ -1242,87 +1242,108 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             requestId.set(0)
             postBrokerEvent(BrokerEventType.TD_NET_CONNECTED, Unit)
             scope.launch {
-                // 请求客户端认证
-                try {
-                    reqAuthenticate()
-                } catch (e: Exception) {
-                    resumeRequestsWithException("connect", "请求客户端认证失败：$e")
-                }
-                // 请求用户登录
-                try {
-                    reqUserLogin()
-                } catch (e: Exception) {
-                    resumeRequestsWithException("connect", "请求用户登录失败：$e")
-                }
-                // 请求结算单确认
-                try {
-                    reqSettlementInfoConfirm()
-                } catch (e: Exception) {
-                    resumeRequestsWithException("connect", "请求结算单确认失败：$e")
-                }
-                // 查询全市场合约
-                runWithRetry({
-                    val allInstruments = queryAllInstruments(false, null)
-                    allInstruments.forEach {
-                        instruments[it.code] = it
-                        codeProductMap[it.code] = it.productId
-                        mdApi.codeMap[it.code.split('.', limit = 2)[1]] = it.code
-                    }
-                }) { e ->
-                    resumeRequestsWithException("connect", "查询全市场合约信息失败：$e")
-                }
-                // 查询保证金价格类型、持仓合约的保证金率及手续费率（如果未禁止费用计算）
-                if (!config.disableFeeCalculation) {
-                    // 查询保证金价格类型
-                    runWithRetry({ queryMarginPriceType() }) { e ->
-                        resumeRequestsWithException("connect", "查询保证金价格类型失败：$e")
-                    }
-                    // 查询持仓合约的手续费率及保证金率
+                // 登录最大限时 60 秒，避免无限等待情况的发生
+                val result = withTimeoutOrNull(60000) {
+                    // 请求客户端认证
                     try {
-                        prepareFeeCalculation()
+                        reqAuthenticate()
+                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】客户端认证成功")
                     } catch (e: Exception) {
-                        resumeRequestsWithException("connect", "查询手续费率及保证金率失败：$e")
+                        resumeRequestsWithException("connect", "请求客户端认证失败：$e")
                     }
-                }
-                // 查询账户持仓
-                runWithRetry({ queryPositions(useCache = false) }) { e ->
-                    resumeRequestsWithException("connect", "查询账户持仓失败：$e")
-                }
-                // 查询当日订单
-                runWithRetry({
-                    val orders = queryOrders(onlyUnfinished = false, useCache = false)
-                    val finishedStatus = setOf(OrderStatus.CANCELED, OrderStatus.FILLED, OrderStatus.ERROR)
-                    orders.forEach {
-                        todayOrders[it.orderId] = it
-                        if (it.status !in finishedStatus) {
-                            when (it.direction) {
-                                Direction.LONG -> unfinishedLongOrders.insert(it)
-                                Direction.SHORT -> unfinishedShortOrders.insert(it)
+                    // 请求用户登录
+                    try {
+                        reqUserLogin()
+                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】资金账户登录成功")
+                    } catch (e: Exception) {
+                        resumeRequestsWithException("connect", "请求用户登录失败：$e")
+                    }
+                    // 请求结算单确认
+                    try {
+                        reqSettlementInfoConfirm()
+                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】结算单确认成功")
+                    } catch (e: Exception) {
+                        resumeRequestsWithException("connect", "请求结算单确认失败：$e")
+                    }
+                    // 查询全市场合约
+                    runWithRetry({
+                        val allInstruments = queryAllInstruments(false, null)
+                        allInstruments.forEach {
+                            instruments[it.code] = it
+                            codeProductMap[it.code] = it.productId
+                            mdApi.codeMap[it.code.split('.', limit = 2)[1]] = it.code
+                        }
+                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询全市场合约成功")
+                    }) { e ->
+                        resumeRequestsWithException("connect", "查询全市场合约信息失败：$e")
+                    }
+                    // 查询保证金价格类型、持仓合约的保证金率及手续费率（如果未禁止费用计算）
+                    if (!config.disableFeeCalculation) {
+                        // 查询保证金价格类型
+                        runWithRetry({
+                            queryMarginPriceType()
+                            postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询保证金价格类型成功")
+                        }) { e ->
+                            resumeRequestsWithException("connect", "查询保证金价格类型失败：$e")
+                        }
+                        // 查询持仓合约的手续费率及保证金率
+                        try {
+                            prepareFeeCalculation()
+                            postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
+                        } catch (e: Exception) {
+                            resumeRequestsWithException("connect", "查询持仓合约手续费率及保证金率失败：$e")
+                        }
+                    }
+                    // 查询账户持仓
+                    runWithRetry({
+                        queryPositions(useCache = false)
+                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询账户持仓成功")
+                    }) { e ->
+                        resumeRequestsWithException("connect", "查询账户持仓失败：$e")
+                    }
+                    // 查询当日订单
+                    runWithRetry({
+                        val orders = queryOrders(onlyUnfinished = false, useCache = false)
+                        val finishedStatus = setOf(OrderStatus.CANCELED, OrderStatus.FILLED, OrderStatus.ERROR)
+                        orders.forEach {
+                            todayOrders[it.orderId] = it
+                            if (it.status !in finishedStatus) {
+                                when (it.direction) {
+                                    Direction.LONG -> unfinishedLongOrders.insert(it)
+                                    Direction.SHORT -> unfinishedShortOrders.insert(it)
+                                }
+                            }
+                            if (it.status == OrderStatus.CANCELED) {
+                                cancelStatistics[it.code] = cancelStatistics.getOrDefault(it.code, 0) + 1
                             }
                         }
-                        if (it.status == OrderStatus.CANCELED) {
-                            cancelStatistics[it.code] = cancelStatistics.getOrDefault(it.code, 0) + 1
-                        }
+                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询当日订单成功")
+                    }) { e ->
+                        resumeRequestsWithException("connect", "查询当日订单失败：$e")
                     }
-                }) { e ->
-                    resumeRequestsWithException("connect", "查询当日订单失败：$e")
+                    // 查询当日成交记录
+                    runWithRetry({
+                        val trades = queryTrades(useCache = false)
+                        todayTrades.addAll(trades)
+                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询当日成交记录成功")
+                    }) { e ->
+                        resumeRequestsWithException("connect", "查询当日成交记录失败：$e")
+                    }
+                    // 订阅持仓合约行情（如果行情可用且未禁止自动订阅）
+                    if (mdApi.connected && !config.disableAutoSubscribe) {
+                        mdApi.subscribeMarketData(positions.keys)
+                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】订阅持仓合约行情成功")
+                    }
                 }
-                // 查询当日成交记录
-                runWithRetry({
-                    val trades = queryTrades(useCache = false)
-                    todayTrades.addAll(trades)
-                }) { e ->
-                    resumeRequestsWithException("connect", "查询当日成交记录失败：$e")
-                }
-                // 订阅持仓合约行情（如果行情可用且未禁止自动订阅）
-                if (mdApi.connected && !config.disableAutoSubscribe) {
-                    mdApi.subscribeMarketData(positions.keys)
-                }
-                // 如果上面都成功，那么登录成功
-                if (requestMap.values.any { it.tag == "connect" }) {
-                    connected = true
-                    postBrokerEvent(BrokerEventType.TD_USER_LOGGED_IN, Unit)
-                    resumeRequests("connect", Unit)
+                if (result == null) {
+                    resumeRequestsWithException("connect", "登录操作超时")
+                } else {
+                    // 如果以上的所有操作都成功，那么登录成功
+                    if (requestMap.values.any { it.tag == "connect" }) {
+                        connected = true
+                        postBrokerEvent(BrokerEventType.TD_LOGGED_IN, Unit)
+                        resumeRequests("connect", Unit)
+                    }
                 }
             }
         }
@@ -1462,7 +1483,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     statusMsg = "$errorMsg ($errorCode)"
                     updateTime = LocalDateTime.now()
                 }
-                postBrokerEvent(BrokerEventType.TD_ORDER_STATUS, order.deepCopy())
+                postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
             })
         }
 
@@ -1484,7 +1505,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     statusMsg = "$errorMsg ($errorCode)"
                     updateTime = LocalDateTime.now()
                 }
-                postBrokerEvent(BrokerEventType.TD_CANCEL_FAILED, order.deepCopy())
+                postBrokerEvent(BrokerEventType.CANCEL_FAILED, order.deepCopy())
             })
         }
 
@@ -1502,7 +1523,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (order == null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
                     order = Translator.orderC2A(pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
-                        postBrokerEvent(BrokerEventType.TD_ERROR, "OnRtnOrder time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                        postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRtnOrder time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     calculateOrder(order)
                     todayOrders[orderId] = order
@@ -1567,7 +1588,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             if (newOrderStatus == OrderStatus.ERROR) {
                 order.updateTime = LocalDateTime.now()
-                postBrokerEvent(BrokerEventType.TD_ORDER_STATUS, order.deepCopy())
+                postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
             } else {
                 // 仅发送与成交不相关的订单状态更新回报，成交相关的订单状态更新回报会在 OnRtnTrade 中发出，以确保成交回报先于状态回报
                 if (newOrderStatus != oldStatus && newOrderStatus != OrderStatus.PARTIALLY_FILLED && newOrderStatus != OrderStatus.FILLED) {
@@ -1597,11 +1618,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             LocalDateTime.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${pOrder.insertTime}")
                         }
                     } catch (e: Exception) {
-                        postBrokerEvent(BrokerEventType.TD_ERROR, "OnRtnOrder updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                        postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRtnOrder updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                         LocalDateTime.now()
                     }
                     order.updateTime = updateTime
-                    postBrokerEvent(BrokerEventType.TD_ORDER_STATUS, order.deepCopy())
+                    postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
                 }
             }
         }
@@ -1615,11 +1636,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             if (order == null || order.orderSysId != orderSysId) {
                 order = todayOrders.values.find { it.orderSysId == orderSysId }
                 if (order == null) {
-                    postBrokerEvent(BrokerEventType.TD_ERROR, "OnRtnTrade 收到未知成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
+                    postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRtnTrade 收到未知成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                 }
             }
             val trade = Translator.tradeC2A(pTrade, order?.orderId ?: orderSysId) { e ->
-                postBrokerEvent(BrokerEventType.TD_ERROR, "OnRtnTrade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
+                postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRtnTrade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
             }
             val instrument = instruments[trade.code] ?: return
             trade.turnover = trade.volume * trade.price * instrument.volumeMultiple
@@ -1743,7 +1764,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 position.todayCommission += trade.commission
             }
             todayTrades.add(trade)
-            postBrokerEvent(BrokerEventType.TD_TRADE_REPORT, trade.copy())
+            postBrokerEvent(BrokerEventType.TRADE_REPORT, trade.copy())
             // 更新 order 信息
             if (order != null) {
                 order.filledVolume += trade.volume
@@ -1756,7 +1777,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     OrderStatus.FILLED
                 }
                 calculateOrder(order)
-                postBrokerEvent(BrokerEventType.TD_ORDER_STATUS, order.deepCopy())
+                postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
             }
         }
 
@@ -1775,7 +1796,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (pOrder != null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
                     val order = Translator.orderC2A(pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
-                        postBrokerEvent(BrokerEventType.TD_ERROR, "OnRspQryOrder time 解析失败：${"${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                        postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRspQryOrder time 解析失败：${"${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     reqData.results.add(order)
                 }
@@ -1820,11 +1841,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (order == null || order.orderSysId != orderSysId) {
                         order = todayOrders.values.find { it.orderSysId == orderSysId }
                         if (order == null) {
-                            postBrokerEvent(BrokerEventType.TD_ERROR, "OnRspQryTrade 未找到对应订单：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
+                            postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRspQryTrade 未找到对应订单：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                         }
                     }
                     val trade = Translator.tradeC2A(pTrade, order?.orderId ?: orderSysId) { e ->
-                        postBrokerEvent(BrokerEventType.TD_ERROR, "OnRspQryTrade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
+                        postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRspQryTrade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
                     }
                     reqData.results.add(trade)
                 }
@@ -1870,7 +1891,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val code = "${pDepthMarketData.exchangeID}.${pDepthMarketData.instrumentID}"
                 if (code == reqCode) {
                     val tick = Translator.tickC2A(code, pDepthMarketData, volumeMultiple = instruments[code]?.volumeMultiple, marketStatus = getInstrumentStatus(code)) { e ->
-                        postBrokerEvent(BrokerEventType.TD_ERROR, "OnRspQryDepthMarketData updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
+                        postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRspQryDepthMarketData updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
                     }
                     cachedTickMap[code] = tick
                     (request.continuation as Continuation<Tick?>).resume(tick)
@@ -1900,7 +1921,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             val reqData = request.data
             val instrument = pInstrument?.let {
                 Translator.securityC2A(pInstrument) { e ->
-                    postBrokerEvent(BrokerEventType.TD_ERROR, "OnRspQryInstrument Instrument 解析失败(${pInstrument.exchangeID}.${pInstrument.instrumentID})：$e")
+                    postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRspQryInstrument Instrument 解析失败(${pInstrument.exchangeID}.${pInstrument.instrumentID})：$e")
                 }
             }
             checkRspInfo(pRspInfo, {
@@ -2133,7 +2154,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (standardCode.startsWith(ExchangeID.CFFEX)) {
                         val job = scope.launch {
                             runWithRetry({ queryFuturesOrderCommissionRate(standardCode) }) { e ->
-                                postBrokerEvent(BrokerEventType.TD_ERROR, "查询期货申报手续费失败：$standardCode, $e")
+                                postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】查询期货申报手续费失败：$standardCode, $e")
                             }
                         }
                         (request.data as MutableList<Job>).add(job)
