@@ -11,7 +11,6 @@ import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.Continuation
@@ -47,7 +46,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      */
     private val scope = CoroutineScope(Dispatchers.Default)
     /**
-     * 上次更新的交易日。不可用来作为当日交易日，因为 [connected] 可能处于 false 状态，此时该值可能因过期而失效
+     * 上次更新的交易日。当 [connected] 处于 false 状态时可能因过期而失效
      */
     private var tradingDay = ""
     /**
@@ -257,13 +256,13 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      * 获取当前交易日
      */
     fun getTradingDay(): String {
-        return tdApi.GetTradingDay()
+        return if (connected) tradingDay else tdApi.GetTradingDay()
     }
 
     /**
      * 向交易所发送订单报单，会自动检查自成交。[extras.minVolume: Int]【最小成交量。仅当 [orderType] 为 [OrderType.FAK] 时生效】
      */
-    fun insertOrder(
+    suspend fun insertOrder(
         code: String,
         price: Double,
         volume: Int,
@@ -275,7 +274,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
         val (exchangeId, instrumentId) = parseCode(code)
         val orderRef = nextOrderRef().toString()
         // 检查是否存在自成交风险
-        var errorInfo = when {
+        val errorInfo = when {
             direction == Direction.LONG && price >= minShortPrice -> "本地拒单：存在自成交风险（当前做多价格为 $price，最低做空价格为 ${minShortPrice}）"
             direction == Direction.SHORT && price <= maxLongPrice -> "本地拒单：存在自成交风险（当前做空价格为 $price，最高做多价格为 ${maxLongPrice}）"
             else -> null
@@ -324,9 +323,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     else -> throw IllegalArgumentException("未支持 $orderType 类型的订单")
                 }
             }
-            runBlocking {
-                runWithResultCheck({ tdApi.ReqOrderInsert(reqField, nextRequestId()) }, {})
-            }
+            runWithResultCheck({ tdApi.ReqOrderInsert(reqField, nextRequestId()) }, {})
         }
         // 构建返回的 order 对象
         val now = LocalDateTime.now()
@@ -357,7 +354,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     /**
      * 撤单，会自动检查撤单次数是否达到 499 次上限。[orderId] 格式为 frontId_sessionId_orderRef
      */
-    fun cancelOrder(orderId: String, extras: Map<String, Any>? = null) {
+    suspend fun cancelOrder(orderId: String, extras: Map<String, Any>? = null) {
         val cancelReqField = CThostFtdcInputOrderActionField().apply {
             brokerID = config.brokerId
             investorID = config.investorId
@@ -390,9 +387,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 throw Exception("本地拒撤：达到撤单次数上限（已撤 ${cancelStatistics[order.code]} 次）")
             }
         }
-        runBlocking {
-            runWithResultCheck({ tdApi.ReqOrderAction(cancelReqField, nextRequestId()) }, {})
-        }
+        runWithResultCheck({ tdApi.ReqOrderAction(cancelReqField, nextRequestId()) }, {})
     }
 
     /**
@@ -768,11 +763,11 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                 investorID = config.investorId
             }
             val requestId = nextRequestId()
-            runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
+            runWithResultCheck<List<Job>>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
                 suspendCoroutine { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation)
+                    requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<Job>())
                 }
-            })
+            }).forEach { it.join() }
         } else {
             val instrument = instruments[code]
             if (instrument != null && instrument.commissionRate == null && instrument.type == SecurityType.FUTURES) {
@@ -784,11 +779,11 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                     instrumentID = insId
                 }
                 val requestId = nextRequestId()
-                runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
+                runWithResultCheck<List<Job>>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
                     suspendCoroutine { continuation ->
-                        requestMap[requestId] = RequestContinuation(requestId, continuation)
+                        requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<Job>())
                     }
-                })
+                }).forEach { it.join() }
             }
         }
     }
@@ -1901,7 +1896,7 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             val request = requestMap[nRequestID] ?: return
             val reqData = request.data
             val instrument = pInstrument?.let {
-                Translator.instrumentC2A(pInstrument) { e ->
+                Translator.securityC2A(pInstrument) { e ->
                     postBrokerEvent(BrokerEventType.TD_ERROR, "OnRspQryInstrument Instrument 解析失败(${pInstrument.exchangeID}.${pInstrument.instrumentID})：$e")
                 }
             }
@@ -2131,21 +2126,18 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
                             standardCode = instrument.code
                         }
                     }
+                    // 如果是中金所期货，那么查询申报手续费
                     if (standardCode.startsWith(ExchangeID.CFFEX)) {
-                        // 因为做多异步查询等待太麻烦了，直接先硬写，之后再更新（以防止之后申报手续费发生变更）
-                        if (standardCode.length >= 8 && standardCode.slice(6..7) in setOf("IC", "IF", "IH")) {
-                            commissionRate.orderInsertFeeByTrade = 1.0
-                            commissionRate.orderCancelFeeByTrade = 1.0
-                        }
-                        scope.launch {
+                        val job = scope.launch {
                             runWithRetry({ queryFuturesOrderCommissionRate(standardCode) }) { e ->
                                 postBrokerEvent(BrokerEventType.TD_ERROR, "查询期货申报手续费失败：$standardCode, $e")
                             }
                         }
+                        (request.data as MutableList<Job>).add(job)
                     }
                 }
                 if (bIsLast) {
-                    (request.continuation as Continuation<Unit>).resume(Unit)
+                    (request.continuation as Continuation<List<Job>>).resume(request.data as MutableList<Job>)
                     requestMap.remove(nRequestID)
                 }
             }) { errorCode, errorMsg ->
@@ -2202,12 +2194,10 @@ class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
             checkRspInfo(pRspInfo, {
                 if (pCommissionRate != null) {
                     // pCommissionRate.exchangeID 为空，pCommissionRate.instrumentID 为期货品种代码 (productId)
-                    var optionsType = OptionsType.UNKNOWN
                     val commissionRate = Translator.optionsCommissionRateC2A(pCommissionRate)
                     val instrumentList = instruments.values.filter {
                         if (it.type != SecurityType.OPTIONS) return@filter false
                         if (it.commissionRate != null) return@filter false
-                        if (optionsType != OptionsType.UNKNOWN && optionsType != it.optionsType) return@filter false
                         return@filter it.productId == pCommissionRate.instrumentID
                     }
                     instrumentList.forEach { it.commissionRate = commissionRate }

@@ -7,9 +7,11 @@ import org.rationalityfrontline.ktrader.broker.api.*
 import java.time.LocalDate
 
 class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config, kEvent) {
+
     private val ctpConfig: CtpConfig = CtpBrokerInfo.parseConfig(config)
     private val mdApi: CtpMdApi
     private val tdApi: CtpTdApi
+
     override val name: String = CtpBrokerInfo.name
     override val version: String = CtpBrokerInfo.version
     override val account: String = ctpConfig.investorId
@@ -81,7 +83,7 @@ class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config,
         return runWithRetry({ tdApi.queryAllInstruments(useCache, extras) })
     }
 
-    override fun insertOrder(
+    override suspend fun insertOrder(
         code: String,
         price: Double,
         volume: Int,
@@ -93,7 +95,7 @@ class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config,
         return tdApi.insertOrder(code, price, volume, direction, offset, orderType, extras)
     }
 
-    override fun cancelOrder(orderId: String, extras: Map<String, Any>?) {
+    override suspend fun cancelOrder(orderId: String, extras: Map<String, Any>?) {
         tdApi.cancelOrder(orderId, extras)
     }
 

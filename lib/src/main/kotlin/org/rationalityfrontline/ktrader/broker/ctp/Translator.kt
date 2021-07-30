@@ -125,7 +125,7 @@ internal object Translator {
         }
     }
 
-    fun instrumentC2A(insField: CThostFtdcInstrumentField, onTimeParseError: (Exception) -> Unit): Security? {
+    fun securityC2A(insField: CThostFtdcInstrumentField, onTimeParseError: (Exception) -> Unit): Security? {
         return try {
             val type = when (insField.productClass) {
                 jctpConstants.THOST_FTDC_PC_Futures -> SecurityType.FUTURES
@@ -152,7 +152,7 @@ internal object Translator {
                         else -> OptionsType.UNKNOWN
                     },
                     optionsUnderlyingCode = "${insField.exchangeID}.${insField.underlyingInstrID}",
-                    optionsStrikePrice = insField.strikePrice
+                    optionsStrikePrice = formatDouble(insField.strikePrice)
                 )
             }
         } catch (e: Exception) {
@@ -297,8 +297,8 @@ internal object Translator {
             closeRatioByVolume = crField.closeRatioByVolume,
             closeTodayRatioByMoney = crField.closeTodayRatioByMoney,
             closeTodayRatioByVolume = crField.closeTodayRatioByVolume,
-            optionsStrikeRationByMoney = crField.strikeRatioByMoney,
-            optionsStrikeRationByVolume = crField.strikeRatioByVolume,
+            optionsStrikeRatioByMoney = crField.strikeRatioByMoney,
+            optionsStrikeRatioByVolume = crField.strikeRatioByVolume,
         )
     }
 

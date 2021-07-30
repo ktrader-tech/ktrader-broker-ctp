@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "org.rationalityfrontline.ktrader"
-version = "1.1.0"
+version = "1.1.1"
 val NAME = "ktrader-broker-ctp"
 val DESC = "CTP implementation of KTrader-Broker-API"
 val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
@@ -17,7 +17,7 @@ val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = "broker-ctp-rf"
 val pluginVersion = version as String
-val pluginRequires = "1.1.0"
+val pluginRequires = "1.1.1"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"

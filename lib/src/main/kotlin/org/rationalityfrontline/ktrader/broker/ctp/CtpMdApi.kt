@@ -31,7 +31,7 @@ class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
     private val requestId: AtomicInteger = AtomicInteger(0)
     private fun nextRequestId(): Int = requestId.incrementAndGet()
     /**
-     * 上次更新的交易日。不可用来作为当日交易日，因为 [connected] 可能处于 false 状态，此时该值可能因过期而失效
+     * 上次更新的交易日。当 [connected] 处于 false 状态时可能因过期而失效
      */
     private var tradingDay: String = ""
     /**
@@ -131,7 +131,7 @@ class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) 
      * 获取当前交易日
      */
     fun getTradingDay(): String {
-        return mdApi.GetTradingDay()
+        return if (connected) tradingDay else mdApi.GetTradingDay()
     }
 
     /**
