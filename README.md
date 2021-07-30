@@ -97,8 +97,8 @@ fun main() {
 
 ## 示例项目
 本框架在 examples 目录下提供了一些示例项目帮助使用者快速入门及创建新项目：
-
-[library-basic](https://github.com/ktrader-tech/ktrader-broker-ctp/tree/master/examples/library-basic) ：展示以类库方式使用本框架的最简单基础的示例项目
+* [library-basic](https://github.com/ktrader-tech/ktrader-broker-ctp/tree/master/examples/library-basic) ：展示以类库方式使用本框架的最简单基础的示例项目
+* [plugin-basic](https://github.com/ktrader-tech/ktrader-broker-ctp/tree/master/examples/plugin-basic) ：展示以插件方式使用本框架的最简单基础的示例项目
 
 ## 使用说明
 相较于 [KTrader-Broker-API](https://github.com/ktrader-tech/ktrader-broker-api) 标准接口，本框架需要说明的参数及额外扩展如下：
