@@ -7,11 +7,12 @@
 
 对底层 CTP 的调用使用了 CTP 的 Java 封装 [JCTP](https://github.com/RationalityFrontline/jctp) ，支持 64 位的 Windows 及 Linux 操作系统。
 默认使用的 JCTP 版本为 `6.6.1_P1-1.0.0`，如果需要更换为其它版本，请参考 [Download](#download) 部分。
+> 虽然该项目是为 [KTrader 量化交易系统](https://github.com/ktrader-tech/ktrader) 而开发的，但也可以脱离 KTrader 独立使用
 
 ## 功能特性
 * 利用 [Kotlin 协程](https://github.com/Kotlin/kotlinx.coroutines) 将 CTP 的异步接口封装为 [KTrader-Broker-API](https://github.com/ktrader-tech/ktrader-broker-api) 的统一同步调用方式，降低心智负担，提升开发效率
 * 内置自成交风控，存在自成交风险的下单请求会本地拒单
-* 内置撤单数量风控，单合约日内撤单数达到 499 次后会本地拒绝该合约的撤单请求
+* 内置撤单数量风控，单合约日内撤单数达到 499 次后会本地拒绝该合约的后续撤单请求
 * 内置 CTP 流控处理，调用层无需关注任何 CTP 流控信息
 * 内置维护本地持仓、订单、成交、Tick 缓存，让查询请求快速返回，不受流控阻塞
 * 支持期货及期权的交易（目前尚不支持期权行权及自对冲，仅支持期权交易）
