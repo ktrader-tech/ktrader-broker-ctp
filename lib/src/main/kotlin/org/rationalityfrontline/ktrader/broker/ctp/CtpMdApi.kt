@@ -6,9 +6,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.kevent.KEvent
-import org.rationalityfrontline.ktrader.broker.api.BrokerEvent
-import org.rationalityfrontline.ktrader.broker.api.BrokerEventType
-import org.rationalityfrontline.ktrader.broker.api.Tick
+import org.rationalityfrontline.ktrader.broker.api.*
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -104,6 +102,20 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
+     * 向 [kEvent] 发送一条 [BrokerEvent].[MessageEvent]
+     */
+    private fun postBrokerMessageEvent(msgType: MessageEventType, msg: String) {
+        postBrokerEvent(BrokerEventType.MESSAGE, MessageEvent(msgType, msg))
+    }
+
+    /**
+     * 向 [kEvent] 发送一条 [BrokerEvent].[ConnectionEvent]
+     */
+    private fun postBrokerConnectionEvent(msgType: ConnectionEventType, msg: String = "") {
+        postBrokerEvent(BrokerEventType.CONNECTION, ConnectionEvent(msgType, msg))
+    }
+
+    /**
      * 连接行情前置并自动完成登录
      */
     suspend fun connect() {
@@ -117,7 +129,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 关闭并释放资源，会发送一条 [BrokerEventType.MD_NET_DISCONNECTED] 信息
+     * 关闭并释放资源，会发送一条 [BrokerEventType.CONNECTION] ([ConnectionEventType.MD_NET_DISCONNECTED]) 信息
      */
     fun close() {
         mdSpi.OnFrontDisconnected(0)
@@ -211,7 +223,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     private inner class CtpMdSpi : CThostFtdcMdSpi() {
 
         /**
-         * 发生错误时回调。如果没有对应的协程请求，会发送一条 [BrokerEventType.MD_ERROR] 信息；有对应的协程请求时，会将其异常完成
+         * 发生错误时回调。如果没有对应的协程请求，会发送一条 [BrokerEventType.MESSAGE] 信息；有对应的协程请求时，会将其异常完成
          */
         override fun OnRspError(pRspInfo: CThostFtdcRspInfoField, nRequestID: Int, bIsLast: Boolean) {
             val request = requestMap[nRequestID]
@@ -219,7 +231,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val errorInfo = "${pRspInfo.errorMsg}, requestId=$nRequestID, isLast=$bIsLast"
                 val connectRequests = requestMap.values.filter { it.tag == "connect" }
                 if (connectRequests.isEmpty()) {
-                    postBrokerEvent(BrokerEventType.ERROR, "【行情接口发生错误】$errorInfo")
+                    postBrokerMessageEvent(MessageEventType.ERROR, "【CtpMdSpi.OnRspError】$errorInfo")
                 } else {
                     resumeRequestsWithException("connect", errorInfo)
                 }
@@ -230,11 +242,11 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
 
         /**
-         * 行情前置连接时回调。会将 [requestId] 置为 0；发送一条 [BrokerEventType.MD_NET_CONNECTED] 信息；自动请求用户登录 mdApi.ReqUserLogin（登录成功后 [connected] 才会置为 true），参见 [OnRspUserLogin]
+         * 行情前置连接时回调。会将 [requestId] 置为 0；发送一条 [BrokerEventType.CONNECTION] 信息；自动请求用户登录 mdApi.ReqUserLogin（登录成功后 [connected] 才会置为 true），参见 [OnRspUserLogin]
          */
         override fun OnFrontConnected() {
             requestId.set(0)
-            postBrokerEvent(BrokerEventType.MD_NET_CONNECTED, Unit)
+            postBrokerConnectionEvent(ConnectionEventType.MD_NET_CONNECTED)
             runBlocking {
                 runWithResultCheck({ mdApi.ReqUserLogin(CThostFtdcReqUserLoginField(), nextRequestId()) }, {}, { code, info ->
                     resumeRequestsWithException("connect", "请求用户登录失败：$info, $code")
@@ -243,12 +255,12 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
 
         /**
-         * 行情前置断开连接时回调。会将 [connected] 置为 false；清空 [lastTicks]；发送一条 [BrokerEventType.MD_NET_DISCONNECTED] 信息；异常完成所有的协程请求
+         * 行情前置断开连接时回调。会将 [connected] 置为 false；清空 [lastTicks]；发送一条 [BrokerEventType.CONNECTION] 信息；异常完成所有的协程请求
          */
         override fun OnFrontDisconnected(nReason: Int) {
             connected = false
             lastTicks.clear()
-            postBrokerEvent(BrokerEventType.MD_NET_DISCONNECTED, "${getDisconnectReason(nReason)} ($nReason)")
+            postBrokerConnectionEvent(ConnectionEventType.MD_NET_DISCONNECTED, "${getDisconnectReason(nReason)} ($nReason)")
             val e = Exception("网络连接断开：${getDisconnectReason(nReason)} ($nReason)")
             requestMap.values.forEach {
                 it.continuation.resumeWithException(e)
@@ -275,7 +287,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (subscriptions.isNotEmpty() && tradingDay == pRspUserLogin.tradingDay) {
                     runBlocking {
                         runWithRetry({ subscribeMarketData(subscriptions.toList(), mapOf("isForce" to true)) }, { e ->
-                            postBrokerEvent(BrokerEventType.ERROR, "【行情接口发生错误】重连后自动订阅行情失败：$e")
+                            postBrokerMessageEvent(MessageEventType.ERROR, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情失败：$e")
                         })
                     }
                 }
@@ -284,7 +296,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     subscriptions.clear()
                     tradingDay = pRspUserLogin.tradingDay
                 }
-                postBrokerEvent(BrokerEventType.MD_LOGGED_IN, Unit)
+                postBrokerConnectionEvent(ConnectionEventType.MD_LOGGED_IN)
                 resumeRequests("connect", Unit)
             }, { errorCode, errorMsg ->
                 resumeRequestsWithException("connect", "请求用户登录失败：$errorMsg ($errorCode)")
@@ -351,13 +363,13 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
 
         /**
-         * 行情推送回调。行情会以 [BrokerEventType.MD_TICK] 信息发送
+         * 行情推送回调。行情会以 [BrokerEventType.TICK] 信息发送
          */
         override fun OnRtnDepthMarketData(data: CThostFtdcDepthMarketDataField) {
             val code = getCode(data.instrumentID)
             val lastTick = lastTicks[code]
             val newTick = Translator.tickC2A(code, data, lastTick, tdApi.instruments[code]?.volumeMultiple, tdApi.getInstrumentStatus(code)) { e ->
-                postBrokerEvent(BrokerEventType.ERROR, "【行情接口发生错误】OnRtnDepthMarketData updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
+                postBrokerMessageEvent(MessageEventType.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
             }
             lastTicks[code] = newTick
             // 过滤掉订阅时自动推送的第一笔数据

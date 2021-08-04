@@ -175,6 +175,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         when (order.direction) {
             Direction.LONG -> unfinishedLongOrders.insert(order)
             Direction.SHORT -> unfinishedShortOrders.insert(order)
+            Direction.UNKNOWN -> postBrokerMessageEvent(MessageEventType.WARNING, "【CtpTdApi.insertUnfinishedOrder】订单方向为 Direction.UNKNOWN（${order.code}, ${order.orderId}）")
         }
     }
 
@@ -185,6 +186,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         when (order.direction) {
             Direction.LONG -> unfinishedLongOrders.remove(order)
             Direction.SHORT -> unfinishedShortOrders.remove(order)
+            Direction.UNKNOWN -> postBrokerMessageEvent(MessageEventType.WARNING, "【CtpTdApi.removeUnfinishedOrder】订单方向为 Direction.UNKNOWN（${order.code}, ${order.orderId}）")
         }
     }
 
@@ -220,6 +222,20 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
+     * 向 [kEvent] 发送一条 [BrokerEvent].[MessageEvent]
+     */
+    private fun postBrokerMessageEvent(msgType: MessageEventType, msg: String) {
+        postBrokerEvent(BrokerEventType.MESSAGE, MessageEvent(msgType, msg))
+    }
+
+    /**
+     * 向 [kEvent] 发送一条 [BrokerEvent].[ConnectionEvent]
+     */
+    private fun postBrokerConnectionEvent(msgType: ConnectionEventType, msg: String = "") {
+        postBrokerEvent(BrokerEventType.CONNECTION, ConnectionEvent(msgType, msg))
+    }
+
+    /**
      * 连接交易前置并自动完成认证、登录、结算单确认、全市场合约查询
      */
     suspend fun connect() {
@@ -233,7 +249,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 关闭并释放资源，会发送一条 [BrokerEventType.TD_NET_DISCONNECTED] 信息
+     * 关闭并释放资源，会发送一条 [BrokerEventType.CONNECTION] ([ConnectionEventType.TD_NET_DISCONNECTED]) 信息
      */
     fun close() {
         tdSpi.OnFrontDisconnected(0)
@@ -615,14 +631,14 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      */
     suspend fun queryPosition(code: String, direction: Direction, useCache: Boolean = true, extras: Map<String, Any>? = null): Position? {
         if (direction == Direction.UNKNOWN) return null
-        if (useCache) {
-            return queryCachedPosition(code, direction)?.copy()
+        return if (useCache) {
+            queryCachedPosition(code, direction)?.copy()
         } else {
             val qryField = CThostFtdcQryInvestorPositionField().apply {
                 instrumentID = parseCode(code).second
             }
             val requestId = nextRequestId()
-            return runWithResultCheck({ tdApi.ReqQryInvestorPosition(qryField, requestId) }, {
+            runWithResultCheck({ tdApi.ReqQryInvestorPosition(qryField, requestId) }, {
                 suspendCoroutine { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation, tag = direction.name, data = mutableListOf<Position>())
                 }
@@ -873,16 +889,16 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             if (throwException){
                 throw e
             } else {
-                postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】查询期货手续费率出错：$code, $e")
+                postBrokerMessageEvent(MessageEventType.ERROR, msg)
             }
         }
         when (instrument.type) {
             SecurityType.FUTURES -> {
                 if (instrument.commissionRate == null) {
-                    runWithRetry({ queryFuturesCommissionRate(code) }) { e -> handleException(e, "查询期货手续费率出错：$code, $e") }
+                    runWithRetry({ queryFuturesCommissionRate(code) }) { e -> handleException(e, "【CtpTdApi.prepareFeeCalculation】查询期货手续费率出错：$code, $e") }
                 }
                 if (instrument.marginRate == null) {
-                    runWithRetry({ queryFuturesMarginRate(code) }) { e -> handleException(e, "查询期货保证金率出错：$code, $e") }
+                    runWithRetry({ queryFuturesMarginRate(code) }) { e -> handleException(e, "【CtpTdApi.prepareFeeCalculation】查询期货保证金率出错：$code, $e") }
                 }
             }
             SecurityType.OPTIONS -> {
@@ -930,7 +946,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 try {
                     runBlocking { mdApi.subscribeMarketData(listOf(code)) }
                 } catch (e: Exception) {
-                    postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】计算保证金时订阅合约行情失败：$code, $e")
+                    postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdApi.getOrQueryTick】计算保证金时自动订阅合约行情失败：$code, $e")
                 }
             } else {
                 isLatestTick = true
@@ -947,7 +963,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         isLatestTick = true
                     }
                 } catch (e: Exception) {
-                    postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】计算保证金时查询合约最新行情失败：$code, $e")
+                    postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdApi.getOrQueryTick】计算保证金时查询合约最新行情失败：$code, $e")
                 }
             }
         }
@@ -1011,8 +1027,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     return calculateMargin(avgOpenPrice)
                 }
                 val (tick, isLatestTick) = getOrQueryTick(instrument.code)
-                if (tick == null) {
-                    return fallback
+                return if (tick == null) {
+                    fallback
                 } else {
                     val price = if (isLatestTick) {
                         when (optionsMarginPriceType) {
@@ -1023,7 +1039,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     } else {
                         tick.preSettlementPrice
                     }
-                    return calculateMargin(price)
+                    calculateMargin(price)
                 }
             }
             else -> return fallback
@@ -1082,6 +1098,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 when (instrument.type) {
                     SecurityType.FUTURES -> order.frozenCash = calculateFuturesMargin(instrument, order.direction, 0, restVolume, order.price, 0.0)
                     SecurityType.OPTIONS -> order.frozenCash = calculateOptionsMargin(instrument, order.direction, restVolume, order.price, 0.0, true)
+                    else -> return
                 }
             }
             // 如果是中金所股指期货，计算申报手续费
@@ -1103,6 +1120,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                                 order.cancelFeeCalculated = true
                             }
                         }
+                        else -> Unit
                     }
                 }
             }
@@ -1134,10 +1152,12 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             OrderOffset.CLOSE_TODAY -> {
                                 trade.commission = trade.turnover * com.closeTodayRatioByMoney + trade.volume * com.closeTodayRatioByVolume
                             }
+                            else -> postBrokerMessageEvent(MessageEventType.WARNING, "【CtpTdApi.calculateTrade】订单开平仓类型未知（${trade.code}, ${trade.offset}）")
                         }
                     }
                 }
             }
+            else -> return
         }
     }
 
@@ -1217,7 +1237,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
 
         /**
-         * 发生错误时回调。如果没有对应的协程请求，会发送一条 [BrokerEventType.TD_ERROR] 信息；有对应的协程请求时，会将其异常完成
+         * 发生错误时回调。如果没有对应的协程请求，会发送一条 [BrokerEventType.MESSAGE] 信息；有对应的协程请求时，会将其异常完成
          */
         override fun OnRspError(pRspInfo: CThostFtdcRspInfoField, nRequestID: Int, bIsLast: Boolean) {
             val request = requestMap[nRequestID]
@@ -1225,7 +1245,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val errorInfo = "${pRspInfo.errorMsg}, requestId=$nRequestID, isLast=$bIsLast"
                 val connectRequests = requestMap.values.filter { it.tag == "connect" }
                 if (connectRequests.isEmpty()) {
-                    postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】$errorInfo")
+                    postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdSpi.OnRspError】$errorInfo")
                 } else {
                     resumeRequestsWithException("connect", errorInfo)
                 }
@@ -1236,32 +1256,32 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
 
         /**
-         * 行情前置连接时回调。会将 [requestId] 置为 0；发送一条 [BrokerEventType.TD_NET_CONNECTED] 信息
+         * 行情前置连接时回调。会将 [requestId] 置为 0；发送一条 [BrokerEventType.CONNECTION] 信息
          */
         override fun OnFrontConnected() {
             requestId.set(0)
-            postBrokerEvent(BrokerEventType.TD_NET_CONNECTED, Unit)
+            postBrokerConnectionEvent(ConnectionEventType.TD_NET_CONNECTED)
             scope.launch {
                 // 登录最大限时 60 秒，避免无限等待情况的发生
                 val result = withTimeoutOrNull(60000) {
                     // 请求客户端认证
                     try {
                         reqAuthenticate()
-                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】客户端认证成功")
+                        postBrokerMessageEvent(MessageEventType.INFO, "【交易接口登录】客户端认证成功")
                     } catch (e: Exception) {
                         resumeRequestsWithException("connect", "请求客户端认证失败：$e")
                     }
                     // 请求用户登录
                     try {
                         reqUserLogin()
-                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】资金账户登录成功")
+                        postBrokerMessageEvent(MessageEventType.INFO, "【交易接口登录】资金账户登录成功")
                     } catch (e: Exception) {
                         resumeRequestsWithException("connect", "请求用户登录失败：$e")
                     }
                     // 请求结算单确认
                     try {
                         reqSettlementInfoConfirm()
-                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】结算单确认成功")
+                        postBrokerMessageEvent(MessageEventType.INFO, "【交易接口登录】结算单确认成功")
                     } catch (e: Exception) {
                         resumeRequestsWithException("connect", "请求结算单确认失败：$e")
                     }
@@ -1273,7 +1293,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             codeProductMap[it.code] = it.productId
                             mdApi.codeMap[it.code.split('.', limit = 2)[1]] = it.code
                         }
-                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询全市场合约成功")
+                        postBrokerMessageEvent(MessageEventType.INFO, "【交易接口登录】查询全市场合约成功")
                     }) { e ->
                         resumeRequestsWithException("connect", "查询全市场合约信息失败：$e")
                     }
@@ -1282,14 +1302,14 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         // 查询保证金价格类型
                         runWithRetry({
                             queryMarginPriceType()
-                            postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询保证金价格类型成功")
+                            postBrokerMessageEvent(MessageEventType.INFO, "【交易接口登录】查询保证金价格类型成功")
                         }) { e ->
                             resumeRequestsWithException("connect", "查询保证金价格类型失败：$e")
                         }
                         // 查询持仓合约的手续费率及保证金率
                         try {
                             prepareFeeCalculation()
-                            postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
+                            postBrokerMessageEvent(MessageEventType.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
                         } catch (e: Exception) {
                             resumeRequestsWithException("connect", "查询持仓合约手续费率及保证金率失败：$e")
                         }
@@ -1297,7 +1317,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     // 查询账户持仓
                     runWithRetry({
                         queryPositions(useCache = false)
-                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询账户持仓成功")
+                        postBrokerMessageEvent(MessageEventType.INFO, "【交易接口登录】查询账户持仓成功")
                     }) { e ->
                         resumeRequestsWithException("connect", "查询账户持仓失败：$e")
                     }
@@ -1311,13 +1331,14 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                                 when (it.direction) {
                                     Direction.LONG -> unfinishedLongOrders.insert(it)
                                     Direction.SHORT -> unfinishedShortOrders.insert(it)
+                                    else -> postBrokerMessageEvent(MessageEventType.WARNING, "【交易接口登录】查询到未知方向的订单（${it.code}, ${it.direction}）")
                                 }
                             }
                             if (it.status == OrderStatus.CANCELED) {
                                 cancelStatistics[it.code] = cancelStatistics.getOrDefault(it.code, 0) + 1
                             }
                         }
-                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询当日订单成功")
+                        postBrokerMessageEvent(MessageEventType.INFO, "【交易接口登录】查询当日订单成功")
                     }) { e ->
                         resumeRequestsWithException("connect", "查询当日订单失败：$e")
                     }
@@ -1325,14 +1346,14 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     runWithRetry({
                         val trades = queryTrades(useCache = false)
                         todayTrades.addAll(trades)
-                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】查询当日成交记录成功")
+                        postBrokerMessageEvent(MessageEventType.INFO, "【交易接口登录】查询当日成交记录成功")
                     }) { e ->
                         resumeRequestsWithException("connect", "查询当日成交记录失败：$e")
                     }
                     // 订阅持仓合约行情（如果行情可用且未禁止自动订阅）
                     if (mdApi.connected && !config.disableAutoSubscribe) {
                         mdApi.subscribeMarketData(positions.keys)
-                        postBrokerEvent(BrokerEventType.INFO, "【交易接口登录】订阅持仓合约行情成功")
+                        postBrokerMessageEvent(MessageEventType.INFO, "【交易接口登录】订阅持仓合约行情成功")
                     }
                 }
                 if (result == null) {
@@ -1341,7 +1362,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     // 如果以上的所有操作都成功，那么登录成功
                     if (requestMap.values.any { it.tag == "connect" }) {
                         connected = true
-                        postBrokerEvent(BrokerEventType.TD_LOGGED_IN, Unit)
+                        postBrokerConnectionEvent(ConnectionEventType.TD_NET_CONNECTED)
                         resumeRequests("connect", Unit)
                     }
                 }
@@ -1349,11 +1370,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
 
         /**
-         * 交易前置断开连接时回调。会将 [connected] 置为 false；发送一条 [BrokerEventType.TD_NET_DISCONNECTED] 信息；异常完成所有的协程请求
+         * 交易前置断开连接时回调。会将 [connected] 置为 false；发送一条 [BrokerEventType.CONNECTION] 信息；异常完成所有的协程请求
          */
         override fun OnFrontDisconnected(nReason: Int) {
             connected = false
-            postBrokerEvent(BrokerEventType.TD_NET_DISCONNECTED, "${getDisconnectReason(nReason)} ($nReason)")
+            postBrokerConnectionEvent(ConnectionEventType.TD_NET_DISCONNECTED, "${getDisconnectReason(nReason)} ($nReason)")
             val e = Exception("网络连接断开：${getDisconnectReason(nReason)} ($nReason)")
             requestMap.values.forEach {
                 it.continuation.resumeWithException(e)
@@ -1523,7 +1544,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (order == null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
                     order = Translator.orderC2A(pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
-                        postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRtnOrder time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                        postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdSpi.OnRtnOrder】 Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     calculateOrder(order)
                     todayOrders[orderId] = order
@@ -1531,6 +1552,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         OrderStatus.SUBMITTING,
                         OrderStatus.ACCEPTED,
                         OrderStatus.PARTIALLY_FILLED -> insertUnfinishedOrder(order)
+                        else -> Unit
                     }
                 }
             }
@@ -1607,6 +1629,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                                     position.frozenVolume -= restVolume
                                     position.closeableVolume += restVolume
                                 }
+                                else -> Unit
                             }
                         }
                     }
@@ -1618,7 +1641,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             LocalDateTime.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${pOrder.insertTime}")
                         }
                     } catch (e: Exception) {
-                        postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRtnOrder updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                        postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdSpi.OnRtnOrder】 Order updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                         LocalDateTime.now()
                     }
                     order.updateTime = updateTime
@@ -1636,11 +1659,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             if (order == null || order.orderSysId != orderSysId) {
                 order = todayOrders.values.find { it.orderSysId == orderSysId }
                 if (order == null) {
-                    postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRtnTrade 收到未知成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
+                    postBrokerMessageEvent(MessageEventType.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知订单的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                 }
             }
             val trade = Translator.tradeC2A(pTrade, order?.orderId ?: orderSysId) { e ->
-                postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRtnTrade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
+                postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
             }
             val instrument = instruments[trade.code] ?: return
             trade.turnover = trade.volume * trade.price * instrument.volumeMultiple
@@ -1692,6 +1715,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             when (trade.offset) {
                                 OrderOffset.CLOSE_TODAY -> todayClosed = trade.volume
                                 OrderOffset.CLOSE_YESTERDAY -> yesterdayClosed = trade.volume
+                                else -> Unit
                             }
                         }
                         else -> {
@@ -1796,7 +1820,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (pOrder != null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
                     val order = Translator.orderC2A(pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
-                        postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRspQryOrder time 解析失败：${"${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                        postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdSpi.OnRspQryOrder】Order time 解析失败：${"${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     reqData.results.add(order)
                 }
@@ -1841,11 +1865,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (order == null || order.orderSysId != orderSysId) {
                         order = todayOrders.values.find { it.orderSysId == orderSysId }
                         if (order == null) {
-                            postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRspQryTrade 未找到对应订单：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
+                            postBrokerMessageEvent(MessageEventType.WARNING, "【CtpTdSpi.OnRspQryTrade】未找到对应订单：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                         }
                     }
                     val trade = Translator.tradeC2A(pTrade, order?.orderId ?: orderSysId) { e ->
-                        postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRspQryTrade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
+                        postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdSpi.OnRspQryTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
                     }
                     reqData.results.add(trade)
                 }
@@ -1891,7 +1915,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val code = "${pDepthMarketData.exchangeID}.${pDepthMarketData.instrumentID}"
                 if (code == reqCode) {
                     val tick = Translator.tickC2A(code, pDepthMarketData, volumeMultiple = instruments[code]?.volumeMultiple, marketStatus = getInstrumentStatus(code)) { e ->
-                        postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRspQryDepthMarketData updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
+                        postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdSpi.OnRspQryDepthMarketData】Tick updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
                     }
                     cachedTickMap[code] = tick
                     (request.continuation as Continuation<Tick?>).resume(tick)
@@ -1921,7 +1945,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             val reqData = request.data
             val instrument = pInstrument?.let {
                 Translator.securityC2A(pInstrument) { e ->
-                    postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】OnRspQryInstrument Instrument 解析失败(${pInstrument.exchangeID}.${pInstrument.instrumentID})：$e")
+                    postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdSpi.OnRspQryInstrument】Instrument 解析失败(${pInstrument.exchangeID}.${pInstrument.instrumentID})：$e")
                 }
             }
             checkRspInfo(pRspInfo, {
@@ -2035,6 +2059,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             when (it.direction) {
                                 Direction.LONG -> biPosition.long = it
                                 Direction.SHORT -> biPosition.short = it
+                                else -> postBrokerMessageEvent(MessageEventType.WARNING, "【CtpTdSpi.OnRspQryInvestorPosition】查询到未知的持仓方向（${it.code}, ${it.direction}）")
                             }
                         }
                     } else { // 查询单合约持仓
@@ -2154,7 +2179,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (standardCode.startsWith(ExchangeID.CFFEX)) {
                         val job = scope.launch {
                             runWithRetry({ queryFuturesOrderCommissionRate(standardCode) }) { e ->
-                                postBrokerEvent(BrokerEventType.ERROR, "【交易接口发生错误】查询期货申报手续费失败：$standardCode, $e")
+                                postBrokerMessageEvent(MessageEventType.ERROR, "【CtpTdSpi.OnRspQryInstrumentCommissionRate】查询期货申报手续费失败：$standardCode, $e")
                             }
                         }
                         (request.data as MutableList<Job>).add(job)
