@@ -1,7 +1,7 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
 import org.rationalityfrontline.jctp.*
-import org.rationalityfrontline.ktrader.broker.api.*
+import org.rationalityfrontline.ktrader.datatype.*
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -87,7 +87,7 @@ internal object Translator {
             askVolume = arrayOf(tickField.askVolume1, tickField.askVolume2, tickField.askVolume3, tickField.askVolume4, tickField.askVolume5),
             volume = tickField.volume - (lastTick?.todayVolume ?: tickField.volume),
             turnover = tickField.turnover - (lastTick?.todayTurnover ?: tickField.turnover),
-            openInterest = tickField.openInterest.toInt() - (lastTick?.todayOpenInterest ?: tickField.openInterest.toInt()),
+            openInterestDelta = tickField.openInterest.toInt() - (lastTick?.todayOpenInterest ?: tickField.openInterest.toInt()),
             direction = if (lastTick == null) calculateTickDirection(lastPrice, bidPrice[0], askPrice[0]) else calculateTickDirection(lastPrice, lastTick.bidPrice[0], lastTick.askPrice[0]),
             status = marketStatus,
             preClosePrice = formatDouble(tickField.preClosePrice),

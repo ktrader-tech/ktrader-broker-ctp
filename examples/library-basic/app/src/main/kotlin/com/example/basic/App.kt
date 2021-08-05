@@ -2,8 +2,13 @@ package com.example.basic
 
 import kotlinx.coroutines.runBlocking
 import org.rationalityfrontline.kevent.KEVENT
-import org.rationalityfrontline.ktrader.broker.api.*
+import org.rationalityfrontline.ktrader.broker.api.BrokerEvent
+import org.rationalityfrontline.ktrader.broker.api.BrokerEventType
 import org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerApi
+import org.rationalityfrontline.ktrader.datatype.Direction
+import org.rationalityfrontline.ktrader.datatype.OrderOffset
+import org.rationalityfrontline.ktrader.datatype.OrderType
+import org.rationalityfrontline.ktrader.datatype.Tick
 
 fun main() {
     println("------------ 启动 ------------")

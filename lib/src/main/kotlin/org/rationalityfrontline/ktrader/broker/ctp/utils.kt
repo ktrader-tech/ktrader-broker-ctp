@@ -2,9 +2,9 @@ package org.rationalityfrontline.ktrader.broker.ctp
 
 import kotlinx.coroutines.delay
 import org.rationalityfrontline.jctp.CThostFtdcRspInfoField
-import org.rationalityfrontline.ktrader.broker.api.Order
-import org.rationalityfrontline.ktrader.broker.api.Position
-import org.rationalityfrontline.ktrader.broker.api.Trade
+import org.rationalityfrontline.ktrader.datatype.Order
+import org.rationalityfrontline.ktrader.datatype.Position
+import org.rationalityfrontline.ktrader.datatype.Trade
 import kotlin.coroutines.Continuation
 
 /**

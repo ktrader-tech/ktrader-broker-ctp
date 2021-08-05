@@ -8,9 +8,8 @@ repositories {
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.1")
     implementation("org.rationalityfrontline.workaround:pf4j:3.7.0")
-    implementation("org.rationalityfrontline.ktrader:ktrader-broker-api:1.1.2")
+    implementation("org.rationalityfrontline.ktrader:ktrader-broker-api:1.1.3")
 }
 
 application {

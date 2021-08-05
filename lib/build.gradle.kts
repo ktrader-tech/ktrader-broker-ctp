@@ -28,25 +28,20 @@ repositories {
 
 dependencies {
     val publishMaven = true  // 是否发布到 Maven 仓库
-    val depCoroutines = "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.1"
     val depPf4j = "org.rationalityfrontline.workaround:pf4j:3.7.0"
     val depKtraderBrokerApi = "org.rationalityfrontline.ktrader:ktrader-broker-api:$pluginRequires"
-    val depJctp = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.0"
+    val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.0"
     if (publishMaven) {  // 发布到 Maven 仓库
         implementation(kotlin("stdlib"))
-        api(depCoroutines)
         api(depKtraderBrokerApi)
         compileOnly(depPf4j)
-        implementation(depJctp)
+        implementation(depJCTP)
     } else {  // 发布为 ZIP 插件
         compileOnly(kotlin("stdlib"))
-        compileOnly(depCoroutines)
         compileOnly(depKtraderBrokerApi)
         compileOnly(depPf4j)
         kapt(depPf4j)
-        implementation(depJctp) {
-            exclude(group = "org.slf4j", module = "slf4j-api")
-        }
+        implementation(depJCTP) { exclude(group = "org.slf4j", module = "slf4j-api") }
     }
 }
 

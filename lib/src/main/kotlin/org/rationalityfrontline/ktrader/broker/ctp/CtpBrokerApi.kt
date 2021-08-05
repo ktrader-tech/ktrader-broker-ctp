@@ -3,7 +3,8 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
 import org.rationalityfrontline.kevent.KEvent
-import org.rationalityfrontline.ktrader.broker.api.*
+import org.rationalityfrontline.ktrader.broker.api.BrokerApi
+import org.rationalityfrontline.ktrader.datatype.*
 import java.time.LocalDate
 
 class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config, kEvent) {
@@ -65,7 +66,7 @@ class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config,
     }
 
     /**
-     * [useCache] 与 [retry] 无效，总是查询本地维护的数据，CTP 无此查询接口
+     * [useCache] 无效，总是查询本地维护的数据，CTP 无此查询接口
      */
     override suspend fun querySubscriptions(useCache: Boolean, extras: Map<String, Any>?): List<String> {
         return mdApi.querySubscriptions(useCache, extras)

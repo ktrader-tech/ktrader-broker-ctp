@@ -6,7 +6,7 @@ import org.rationalityfrontline.kevent.KEVENT
 import org.rationalityfrontline.ktrader.broker.api.Broker
 import org.rationalityfrontline.ktrader.broker.api.BrokerEvent
 import org.rationalityfrontline.ktrader.broker.api.BrokerEventType
-import org.rationalityfrontline.ktrader.broker.api.Tick
+import org.rationalityfrontline.ktrader.datatype.Tick
 import java.net.URLConnection
 import java.nio.file.Path
 
@@ -54,6 +54,7 @@ fun main() {
                 // Tick 推送
                 BrokerEventType.TICK -> {
                     val tick = brokerEvent.data as Tick
+                    println("Tick 推送：${tick.code}, ${tick.lastPrice}, ${tick.time}")
                 }
                 // 其它事件（网络连接、订单回报、成交回报等）
                 else -> {

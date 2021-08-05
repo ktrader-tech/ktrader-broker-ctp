@@ -1,4 +1,4 @@
-@file:Suppress("UNCHECKED_CAST", "UNUSED_PARAMETER")
+@file:Suppress("UNCHECKED_CAST", "UNUSED_PARAMETER", "MemberVisibilityCanBePrivate", "CanBeParameter")
 
 package org.rationalityfrontline.ktrader.broker.ctp
 
@@ -7,6 +7,7 @@ import kotlinx.coroutines.withTimeout
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.kevent.KEvent
 import org.rationalityfrontline.ktrader.broker.api.*
+import org.rationalityfrontline.ktrader.datatype.Tick
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -102,10 +103,10 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 向 [kEvent] 发送一条 [BrokerEvent].[MessageEvent]
+     * 向 [kEvent] 发送一条 [BrokerEvent].[LogEvent]
      */
-    private fun postBrokerMessageEvent(msgType: MessageEventType, msg: String) {
-        postBrokerEvent(BrokerEventType.MESSAGE, MessageEvent(msgType, msg))
+    private fun postBrokerLogEvent(level: LogLevel, msg: String) {
+        postBrokerEvent(BrokerEventType.LOG, LogEvent(level, msg))
     }
 
     /**
@@ -223,7 +224,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     private inner class CtpMdSpi : CThostFtdcMdSpi() {
 
         /**
-         * 发生错误时回调。如果没有对应的协程请求，会发送一条 [BrokerEventType.MESSAGE] 信息；有对应的协程请求时，会将其异常完成
+         * 发生错误时回调。如果没有对应的协程请求，会发送一条 [BrokerEventType.LOG] 信息；有对应的协程请求时，会将其异常完成
          */
         override fun OnRspError(pRspInfo: CThostFtdcRspInfoField, nRequestID: Int, bIsLast: Boolean) {
             val request = requestMap[nRequestID]
@@ -231,7 +232,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val errorInfo = "${pRspInfo.errorMsg}, requestId=$nRequestID, isLast=$bIsLast"
                 val connectRequests = requestMap.values.filter { it.tag == "connect" }
                 if (connectRequests.isEmpty()) {
-                    postBrokerMessageEvent(MessageEventType.ERROR, "【CtpMdSpi.OnRspError】$errorInfo")
+                    postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspError】$errorInfo")
                 } else {
                     resumeRequestsWithException("connect", errorInfo)
                 }
@@ -287,7 +288,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (subscriptions.isNotEmpty() && tradingDay == pRspUserLogin.tradingDay) {
                     runBlocking {
                         runWithRetry({ subscribeMarketData(subscriptions.toList(), mapOf("isForce" to true)) }, { e ->
-                            postBrokerMessageEvent(MessageEventType.ERROR, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情失败：$e")
+                            postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情失败：$e")
                         })
                     }
                 }
@@ -369,7 +370,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             val code = getCode(data.instrumentID)
             val lastTick = lastTicks[code]
             val newTick = Translator.tickC2A(code, data, lastTick, tdApi.instruments[code]?.volumeMultiple, tdApi.getInstrumentStatus(code)) { e ->
-                postBrokerMessageEvent(MessageEventType.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
+                postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
             }
             lastTicks[code] = newTick
             // 过滤掉订阅时自动推送的第一笔数据
