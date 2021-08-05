@@ -31,7 +31,7 @@ class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config,
         if (connectTd && !tdConnected) tdApi.connect()
     }
 
-    override suspend fun close() {
+    override fun close() {
         tdApi.close()
         mdApi.close()
     }

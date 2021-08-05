@@ -431,7 +431,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 查询某一特定合约的信息
+     * 查询某一特定合约的信息。[extras.queryFee: Boolean = false]【是否查询保证金率及手续费率，如果之前没查过，可能会耗时。当 useCache 为 false 时无效】
      */
     suspend fun queryInstrument(code: String, useCache: Boolean = true, extras: Map<String, Any>? = null): Security? {
         if (useCache) {
@@ -896,17 +896,21 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         when (instrument.type) {
             SecurityType.FUTURES -> {
                 if (instrument.commissionRate == null) {
+                    postBrokerLogEvent(LogLevel.INFO, "自动查询期货手续费率：$code")
                     runWithRetry({ queryFuturesCommissionRate(code) }) { e -> handleException(e, "【CtpTdApi.prepareFeeCalculation】查询期货手续费率出错：$code, $e") }
                 }
                 if (instrument.marginRate == null) {
+                    postBrokerLogEvent(LogLevel.INFO, "自动查询期货保证金率：$code")
                     runWithRetry({ queryFuturesMarginRate(code) }) { e -> handleException(e, "【CtpTdApi.prepareFeeCalculation】查询期货保证金率出错：$code, $e") }
                 }
             }
             SecurityType.OPTIONS -> {
                 if (instrument.commissionRate == null) {
+                    postBrokerLogEvent(LogLevel.INFO, "自动查询期权手续费率：$code")
                     runWithRetry({ queryOptionsCommissionRate(code) }) { e -> handleException(e, "查询期权手续费率出错：$code, $e") }
                 }
                 if (instrument.marginRate == null) {
+                    postBrokerLogEvent(LogLevel.INFO, "自动查询期权保证金：$code")
                     runWithRetry({ queryOptionsMargin(code) }) { e -> handleException(e, "查询期保证金出错：$code, $e") }
                 }
             }
@@ -920,7 +924,6 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      */
     suspend fun prepareFeeCalculation(codes: Collection<String>? = null, extras: Map<String, Any>? = null) {
         if (codes == null) {
-            // 因为 queryFuturesCommissionRate 可能会进行申报手续费的二次异步查询，所以先查手续费率
             runWithRetry({ queryFuturesCommissionRate() })
             runWithRetry({ queryFuturesMarginRate() })
             runWithRetry({ queryOptionsCommissionRate() })
@@ -945,6 +948,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             // 如果缓存的 tick 为空，说明未订阅该合约，那么订阅该合约以方便后续计算
             if (tick == null) {
                 try {
+                    postBrokerLogEvent(LogLevel.INFO, "自动订阅行情：$code")
                     runBlocking { mdApi.subscribeMarketData(listOf(code)) }
                 } catch (e: Exception) {
                     postBrokerLogEvent(LogLevel.ERROR, "【CtpTdApi.getOrQueryTick】计算保证金时自动订阅合约行情失败：$code, $e")
@@ -975,6 +979,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 计算期货保证金
      */
     private fun calculateFuturesMargin(instrument: Security, direction: Direction, yesterdayVolume: Int, todayVolume: Int, avgOpenPrice: Double, fallback: Double): Double {
+        if (yesterdayVolume + todayVolume == 0) return 0.0
         val marginRate = getOrQueryMarginRate(instrument) ?: return fallback
         val (tick, isLatestTick) = getOrQueryTick(instrument.code)
         if (tick == null) {
@@ -1015,6 +1020,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 计算期权保证金
      */
     private fun calculateOptionsMargin(instrument: Security, direction: Direction, volume: Int, avgOpenPrice: Double, fallback: Double, isOpen: Boolean): Double {
+        if (volume == 0) return 0.0
         when (direction) {
             Direction.LONG -> {  // 买方
                 return if (isOpen) avgOpenPrice * instrument.volumeMultiple else 0.0
@@ -1267,6 +1273,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val result = withTimeoutOrNull(60000) {
                     // 请求客户端认证
                     try {
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证...")
                         reqAuthenticate()
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证成功")
                     } catch (e: Exception) {
@@ -1274,6 +1281,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     }
                     // 请求用户登录
                     try {
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】资金账户登录...")
                         reqUserLogin()
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】资金账户登录成功")
                     } catch (e: Exception) {
@@ -1281,6 +1289,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     }
                     // 请求结算单确认
                     try {
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】结算单确认...")
                         reqSettlementInfoConfirm()
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】结算单确认成功")
                     } catch (e: Exception) {
@@ -1288,6 +1297,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     }
                     // 查询全市场合约
                     runWithRetry({
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约...")
                         val allInstruments = queryAllInstruments(false, null)
                         allInstruments.forEach {
                             instruments[it.code] = it
@@ -1296,12 +1306,13 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         }
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约成功")
                     }) { e ->
-                        resumeRequestsWithException("connect", "查询全市场合约信息失败：$e")
+                        resumeRequestsWithException("connect", "查询全市场合约失败：$e")
                     }
                     // 查询保证金价格类型、持仓合约的保证金率及手续费率（如果未禁止费用计算）
                     if (!config.disableFeeCalculation) {
                         // 查询保证金价格类型
                         runWithRetry({
+                            postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型...")
                             queryMarginPriceType()
                             postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型成功")
                         }) { e ->
@@ -1309,6 +1320,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         }
                         // 查询持仓合约的手续费率及保证金率
                         try {
+                            postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率...")
                             prepareFeeCalculation()
                             postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
                         } catch (e: Exception) {
@@ -1317,13 +1329,21 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     }
                     // 查询账户持仓
                     runWithRetry({
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓...")
                         queryPositions(useCache = false)
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓成功")
                     }) { e ->
                         resumeRequestsWithException("connect", "查询账户持仓失败：$e")
                     }
+                    // 订阅持仓合约行情（如果行情可用且未禁止自动订阅）
+                    if (mdApi.connected && !config.disableAutoSubscribe) {
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】订阅持仓合约行情...")
+                        mdApi.subscribeMarketData(positions.keys)
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】订阅持仓合约行情成功")
+                    }
                     // 查询当日订单
                     runWithRetry({
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日订单...")
                         val orders = queryOrders(onlyUnfinished = false, useCache = false)
                         val finishedStatus = setOf(OrderStatus.CANCELED, OrderStatus.FILLED, OrderStatus.ERROR)
                         orders.forEach {
@@ -1345,25 +1365,21 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     }
                     // 查询当日成交记录
                     runWithRetry({
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录...")
                         val trades = queryTrades(useCache = false)
                         todayTrades.addAll(trades)
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录成功")
                     }) { e ->
                         resumeRequestsWithException("connect", "查询当日成交记录失败：$e")
                     }
-                    // 订阅持仓合约行情（如果行情可用且未禁止自动订阅）
-                    if (mdApi.connected && !config.disableAutoSubscribe) {
-                        mdApi.subscribeMarketData(positions.keys)
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】订阅持仓合约行情成功")
-                    }
                 }
                 if (result == null) {
                     resumeRequestsWithException("connect", "登录操作超时")
                 } else {
+                    postBrokerConnectionEvent(ConnectionEventType.TD_NET_CONNECTED)
                     // 如果以上的所有操作都成功，那么登录成功
                     if (requestMap.values.any { it.tag == "connect" }) {
                         connected = true
-                        postBrokerConnectionEvent(ConnectionEventType.TD_NET_CONNECTED)
                         resumeRequests("connect", Unit)
                     }
                 }
@@ -2052,8 +2068,6 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     posList.forEach { calculatePosition(it, false) }
                     // 如果是查询总持仓，更新持仓缓存
                     if (request.tag == "") {
-                        (request.continuation as Continuation<List<Position>>).resume(posList)
-                        requestMap.remove(nRequestID)
                         positions.clear()
                         posList.forEach {
                             val biPosition = positions.getOrPut(it.code) { BiPosition() }
@@ -2063,6 +2077,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                                 else -> postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRspQryInvestorPosition】查询到未知的持仓方向（${it.code}, ${it.direction}）")
                             }
                         }
+                        (request.continuation as Continuation<List<Position>>).resume(posList)
+                        requestMap.remove(nRequestID)
                     } else { // 查询单合约持仓
                         when (request.tag) {
                             Direction.LONG.name -> {

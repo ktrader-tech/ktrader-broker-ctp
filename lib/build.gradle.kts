@@ -32,7 +32,6 @@ dependencies {
     val depKtraderBrokerApi = "org.rationalityfrontline.ktrader:ktrader-broker-api:$pluginRequires"
     val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.0"
     if (publishMaven) {  // 发布到 Maven 仓库
-        implementation(kotlin("stdlib"))
         api(depKtraderBrokerApi)
         compileOnly(depPf4j)
         implementation(depJCTP)
@@ -87,15 +86,6 @@ tasks {
             "Plugin-Provider" to pluginProvider,
             "Plugin-License" to pluginLicense
         ))
-    }
-    test {
-        testLogging.showStandardStreams = true
-        useJUnitPlatform {
-            jvmArgs = listOf(
-                "--add-exports", "org.junit.platform.commons/org.junit.platform.commons.util=ALL-UNNAMED",
-                "--add-exports", "org.junit.platform.commons/org.junit.platform.commons.logging=ALL-UNNAMED"
-            )
-        }
     }
 }
 
