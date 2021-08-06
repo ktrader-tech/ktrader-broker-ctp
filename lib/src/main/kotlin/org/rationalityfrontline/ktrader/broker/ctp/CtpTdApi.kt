@@ -147,7 +147,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     private val cancelStatistics: MutableMap<String, Int> = mutableMapOf()
 
     init {
-        val tdCachePath = "${config.cachePath.ifBlank { "./ctp_cache/" }}${config.investorId.ifBlank { "unknown" }}/td/"
+        val cachePath = config.cachePath.ifBlank { ".data/ctp/" }
+        val tdCachePath = "${if (cachePath.endsWith('/')) cachePath else "$cachePath/"}${config.investorId.ifBlank { "unknown" }}/td/"
         File(tdCachePath).mkdirs()
         cacheFile = File("${tdCachePath}cache.txt")
         tdApi = CThostFtdcTraderApi.CreateFtdcTraderApi(tdCachePath)

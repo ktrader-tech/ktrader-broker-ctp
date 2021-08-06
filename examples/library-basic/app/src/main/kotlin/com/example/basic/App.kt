@@ -25,7 +25,7 @@ fun main() {
         "brokerId" to "1234",  // BROKER ID
         "appId" to "rf_ktrader_1.0.0",  // APPID
         "authCode" to "ASDFGHJKL",  // 授权码
-        "cachePath" to "./build/flow/",  // 本地缓存文件存储目录
+        "cachePath" to "./data/ctp",  // 本地缓存文件存储目录
         "disableAutoSubscribe" to false,  // 是否禁用自动订阅
         "disableFeeCalculation" to false,  // 是否禁用费用计算
     )
