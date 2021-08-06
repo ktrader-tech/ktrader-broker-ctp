@@ -200,6 +200,7 @@ internal data class BiPosition(
 /**
  * 交易所 ID
  */
+@Suppress("unused")
 object ExchangeID {
     const val SHFE = "SHFE"
     const val INE = "INE"

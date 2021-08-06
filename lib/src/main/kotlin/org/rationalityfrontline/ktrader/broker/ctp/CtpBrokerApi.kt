@@ -76,11 +76,11 @@ class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config,
         return runWithRetry({ tdApi.queryLastTick(code, useCache, extras) })
     }
 
-    override suspend fun querySecurity(code: String, useCache: Boolean, extras: Map<String, Any>?): Security? {
+    override suspend fun querySecurity(code: String, useCache: Boolean, extras: Map<String, Any>?): SecurityInfo? {
         return runWithRetry({ tdApi.queryInstrument(code, useCache, extras) })
     }
 
-    override suspend fun queryAllSecurities(useCache: Boolean, extras: Map<String, Any>?): List<Security> {
+    override suspend fun queryAllSecurities(useCache: Boolean, extras: Map<String, Any>?): List<SecurityInfo> {
         return runWithRetry({ tdApi.queryAllInstruments(useCache, extras) })
     }
 

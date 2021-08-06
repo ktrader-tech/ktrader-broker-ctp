@@ -3,7 +3,7 @@ package org.rationalityfrontline.ktrader.broker.ctp
 import org.rationalityfrontline.jctp.CThostFtdcTraderApi
 
 object CtpBrokerInfo {
-    val name: String = "CTP"
+    const val name: String = "CTP"
     val version: String = CThostFtdcTraderApi.GetApiVersion()
     val configKeys: List<Pair<String, String>> = listOf(
         Pair("mdFronts", "List<String> 行情前置"),

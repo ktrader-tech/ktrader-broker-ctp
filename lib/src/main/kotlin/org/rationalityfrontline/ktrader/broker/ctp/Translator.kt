@@ -10,6 +10,7 @@ import java.time.format.DateTimeFormatter
 /**
  * 翻译器，用于将本地的 CTP 信息翻译为标准的 BrokerApi 信息
  */
+@Suppress("MemberVisibilityCanBePrivate")
 internal object Translator {
 
     private val THOST_FTDC_OF_Open_S = jctpConstants.THOST_FTDC_OF_Open.toString()
@@ -110,6 +111,7 @@ internal object Translator {
     /**
      * 行情推送的 [Tick] 中很多字段可能是无效值，CTP 内用 [Double.MAX_VALUE] 表示，在此需要统一为 0.0
      */
+    @Suppress("NOTHING_TO_INLINE")
     private inline fun formatDouble(input: Double): Double {
         return if (input == Double.MAX_VALUE) 0.0 else input
     }
@@ -125,7 +127,7 @@ internal object Translator {
         }
     }
 
-    fun securityC2A(insField: CThostFtdcInstrumentField, onTimeParseError: (Exception) -> Unit): Security? {
+    fun securityC2A(insField: CThostFtdcInstrumentField, onTimeParseError: (Exception) -> Unit): SecurityInfo? {
         return try {
             val type = when (insField.productClass) {
                 jctpConstants.THOST_FTDC_PC_Futures -> SecurityType.FUTURES
@@ -134,7 +136,7 @@ internal object Translator {
                 else -> SecurityType.UNKNOWN
             }
             if (type == SecurityType.UNKNOWN) null else {
-                Security(
+                SecurityInfo(
                     code = "${insField.exchangeID}.${insField.instrumentID}",
                     type = type,
                     productId = insField.productID,

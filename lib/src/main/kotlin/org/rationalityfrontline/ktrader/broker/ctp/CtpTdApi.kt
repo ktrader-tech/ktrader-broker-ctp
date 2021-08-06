@@ -84,7 +84,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 缓存的合约信息，key 为合约 code
      */
-    val instruments: MutableMap<String, Security> = mutableMapOf()
+    val instruments: MutableMap<String, SecurityInfo> = mutableMapOf()
     /**
      * 品种代码表，key 为合约 code，value 为品种代码(productId)。用于从 code 快速映射到 [productStatusMap]
      */
@@ -438,7 +438,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询某一特定合约的信息。[extras.queryFee: Boolean = false]【是否查询保证金率及手续费率，如果之前没查过，可能会耗时。当 useCache 为 false 时无效】
      */
-    suspend fun queryInstrument(code: String, useCache: Boolean = true, extras: Map<String, Any>? = null): Security? {
+    suspend fun queryInstrument(code: String, useCache: Boolean = true, extras: Map<String, Any>? = null): SecurityInfo? {
         if (useCache) {
             val cachedInstrument = instruments[code]
             if (cachedInstrument != null) {
@@ -464,13 +464,13 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询全市场合约的信息
      */
-    suspend fun queryAllInstruments(useCache: Boolean = true, extras: Map<String, Any>? = null): List<Security> {
+    suspend fun queryAllInstruments(useCache: Boolean = true, extras: Map<String, Any>? = null): List<SecurityInfo> {
         if (useCache && instruments.isNotEmpty()) return instruments.values.toList()
         val qryField = CThostFtdcQryInstrumentField()
         val requestId = nextRequestId()
         return runWithResultCheck({ tdApi.ReqQryInstrument(qryField, requestId) }, {
             suspendCoroutineWithTimeout(TIMEOUT_MILLS * 2) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<Security>())
+                requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<SecurityInfo>())
             }
         })
     }
@@ -867,7 +867,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 获取缓存的期货/期权手续费率，如果没有，则查询后再获取
      */
-    private fun getOrQueryCommissionRate(instrument: Security): CommissionRate? {
+    private fun getOrQueryCommissionRate(instrument: SecurityInfo): CommissionRate? {
         if (config.disableFeeCalculation) return null
         if (instrument.commissionRate == null) {
             runBlocking { prepareFeeCalculation(instrument.code, false) }
@@ -878,7 +878,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 获取缓存的期货保证金率，如果没有，则查询后再获取
      */
-    private fun getOrQueryMarginRate(instrument: Security): MarginRate? {
+    private fun getOrQueryMarginRate(instrument: SecurityInfo): MarginRate? {
         if (config.disableFeeCalculation) return null
         if (instrument.marginRate == null) {
             runBlocking { prepareFeeCalculation(instrument.code, false) }
@@ -991,7 +991,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 计算期货保证金
      */
-    private fun calculateFuturesMargin(instrument: Security, direction: Direction, yesterdayVolume: Int, todayVolume: Int, avgOpenPrice: Double, fallback: Double): Double {
+    private fun calculateFuturesMargin(instrument: SecurityInfo, direction: Direction, yesterdayVolume: Int, todayVolume: Int, avgOpenPrice: Double, fallback: Double): Double {
         if (yesterdayVolume + todayVolume == 0) return 0.0
         val marginRate = getOrQueryMarginRate(instrument) ?: return fallback
         val (tick, isLatestTick) = getOrQueryTick(instrument.code)
@@ -1032,7 +1032,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 计算期权保证金
      */
-    private fun calculateOptionsMargin(instrument: Security, direction: Direction, volume: Int, avgOpenPrice: Double, fallback: Double, isOpen: Boolean): Double {
+    private fun calculateOptionsMargin(instrument: SecurityInfo, direction: Direction, volume: Int, avgOpenPrice: Double, fallback: Double, isOpen: Boolean): Double {
         if (volume == 0) return 0.0
         when (direction) {
             Direction.LONG -> {  // 买方
@@ -1986,7 +1986,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             checkRspInfo(pRspInfo, {
                 // 如果是查询单个合约
                 if (reqData is String) {
-                    val con = request.continuation as Continuation<Security?>
+                    val con = request.continuation as Continuation<SecurityInfo?>
                     if (instrument == null) {
                         con.resume(null)
                         requestMap.remove(nRequestID)
@@ -2002,10 +2002,10 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         }
                     }
                 } else { // 如果是查询多个合约
-                    val insList = request.data as MutableList<Security>
+                    val insList = request.data as MutableList<SecurityInfo>
                     if (instrument != null) insList.add(instrument)
                     if (bIsLast) {
-                        (request.continuation as Continuation<List<Security>>).resume(insList)
+                        (request.continuation as Continuation<List<SecurityInfo>>).resume(insList)
                         requestMap.remove(nRequestID)
                     }
                 }
