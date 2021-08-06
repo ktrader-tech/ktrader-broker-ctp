@@ -3,7 +3,6 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.kevent.KEvent
 import org.rationalityfrontline.ktrader.broker.api.*
@@ -37,7 +36,17 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 交易 Api 对象，用于获取合约的乘数、状态
      */
     lateinit var tdApi: CtpTdApi
+    /**
+     * 是否已调用过 [CThostFtdcMdApi.Init]
+     */
     private var inited = false
+    /**
+     * 行情前置是否已连接
+     */
+    private var frontConnected: Boolean = false
+    /**
+     * 是否已完成登录操作（即处于可用状态）
+     */
     var connected: Boolean = false
         private set
     /**
@@ -117,13 +126,15 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 连接行情前置并自动完成登录
+     * 连接行情前置并自动完成登录。在无法连接至前置的情况下可能会长久阻塞。
+     * 该操作不可加超时限制，因为可能在双休日等非交易时间段启动程序。
      */
     suspend fun connect() {
         if (inited) return
         suspendCoroutine<Unit> { continuation ->
             val requestId = Int.MIN_VALUE // 因为 OnFrontConnected 中 requestId 会重置为 0，为防止 requestId 重复，取整数最小值
             requestMap[requestId] = RequestContinuation(requestId, continuation, "connect")
+            postBrokerLogEvent(LogLevel.INFO, "【行情接口登录】连接前置服务器...")
             mdApi.Init()
             inited = true
         }
@@ -133,7 +144,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 关闭并释放资源，会发送一条 [BrokerEventType.CONNECTION] ([ConnectionEventType.MD_NET_DISCONNECTED]) 信息
      */
     fun close() {
-        mdSpi.OnFrontDisconnected(0)
+        if (frontConnected) mdSpi.OnFrontDisconnected(0)
         subscriptions.clear()
         codeMap.clear()
         mdApi.Release()
@@ -173,16 +184,13 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (codeMap[instrumentId] == null) codeMap[instrumentId] = code
                 instrumentId
             }.toTypedArray()
-            // 加上超时是为了防止出现因订阅丢失导致 continuation 一直挂起的情况
-            withTimeout(1000) {
-                runWithResultCheck({ mdApi.SubscribeMarketData(rawCodes) }, {
-                    suspendCoroutine<Unit> { continuation ->
-                        val requestId = nextRequestId()
-                        // data 为订阅的 instrumentId 可变集合，在 CtpMdSpi.OnRspSubMarketData 中每收到一条合约订阅成功回报，就将该 instrumentId 从该可变集合中移除。当集合为空时，表明请求完成
-                        requestMap[requestId] = RequestContinuation(requestId, continuation, "subscribeMarketData", rawCodes.toMutableSet())
-                    }
-                })
-            }
+            val requestId = nextRequestId()
+            runWithResultCheck({ mdApi.SubscribeMarketData(rawCodes) }, {
+                suspendCoroutineWithTimeout<Unit>(TIMEOUT_MILLS) { continuation ->
+                    // data 为订阅的 instrumentId 可变集合，在 CtpMdSpi.OnRspSubMarketData 中每收到一条合约订阅成功回报，就将该 instrumentId 从该可变集合中移除。当集合为空时，表明请求完成
+                    requestMap[requestId] = RequestContinuation(requestId, continuation, "subscribeMarketData", rawCodes.toMutableSet())
+                }
+            })
         }
     }
 
@@ -194,9 +202,9 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         val filteredCodes = if (extras?.get("isForce") != true) codes.filter { it in subscriptions } else codes
         if (filteredCodes.isEmpty()) return
         val rawCodes = filteredCodes.map { parseCode(it).second }.toTypedArray()
+        val requestId = nextRequestId()
         runWithResultCheck({ mdApi.UnSubscribeMarketData(rawCodes) }, {
-            suspendCoroutine<Unit> { continuation ->
-                val requestId = nextRequestId()
+            suspendCoroutineWithTimeout<Unit>(TIMEOUT_MILLS) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation, "unsubscribeMarketData", rawCodes.toMutableSet())
             }
         })
@@ -246,6 +254,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
          * 行情前置连接时回调。会将 [requestId] 置为 0；发送一条 [BrokerEventType.CONNECTION] 信息；自动请求用户登录 mdApi.ReqUserLogin（登录成功后 [connected] 才会置为 true），参见 [OnRspUserLogin]
          */
         override fun OnFrontConnected() {
+            frontConnected = true
             requestId.set(0)
             postBrokerConnectionEvent(ConnectionEventType.MD_NET_CONNECTED)
             runBlocking {
@@ -259,6 +268,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
          * 行情前置断开连接时回调。会将 [connected] 置为 false；清空 [lastTicks]；发送一条 [BrokerEventType.CONNECTION] 信息；异常完成所有的协程请求
          */
         override fun OnFrontDisconnected(nReason: Int) {
+            frontConnected = false
             connected = false
             lastTicks.clear()
             postBrokerConnectionEvent(ConnectionEventType.MD_NET_DISCONNECTED, "${getDisconnectReason(nReason)} ($nReason)")

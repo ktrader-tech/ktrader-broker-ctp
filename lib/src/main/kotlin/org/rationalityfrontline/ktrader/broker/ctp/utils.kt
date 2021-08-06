@@ -1,11 +1,19 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import org.rationalityfrontline.jctp.CThostFtdcRspInfoField
 import org.rationalityfrontline.ktrader.datatype.Order
 import org.rationalityfrontline.ktrader.datatype.Position
 import org.rationalityfrontline.ktrader.datatype.Trade
 import kotlin.coroutines.Continuation
+
+/**
+ * 请求超时时间，单位：毫秒
+ */
+const val TIMEOUT_MILLS: Long = 5000
 
 /**
  * 验证 code 是否规范，并解析返回其交易所代码和合约代码（[Pair.first] 为 exchangeId，[Pair.second] 为 instrumentId）
@@ -92,6 +100,15 @@ internal suspend fun <T> runWithRetry(action: suspend () -> T, onError: (Excepti
 }
 
 /**
+ * [withTimeout] 与 [suspendCancellableCoroutine] 的结合简写
+ */
+suspend inline fun <T> suspendCoroutineWithTimeout(timeMills: Long, crossinline block: (CancellableContinuation<T>) -> Unit): T {
+    return withTimeout(timeMills) {
+        suspendCancellableCoroutine(block)
+    }
+}
+
+/**
  * 协程请求续体，用于记录请求并在异步回调时恢复请求
  * @param tag 标签，主要用于登录等没有 requestId 的情况
  * @param data 额外数据
@@ -103,6 +120,9 @@ internal data class RequestContinuation(
     val data: Any = Unit,
 )
 
+/**
+ * 用于记录成交记录查询请求的请求参数以及保存查询的结果
+ */
 internal data class QueryTradesData(
     val tradeId: String? = null,
     var code: String? = null,
@@ -110,6 +130,9 @@ internal data class QueryTradesData(
     val results: MutableList<Trade> = mutableListOf()
 )
 
+/**
+ * 用于记录订单记录查询请求的参数以及保存查询的结果
+ */
 internal data class QueryOrdersData(
     val orderId: String? = null,
     val code: String? = null,
