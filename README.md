@@ -45,7 +45,7 @@ fun main() {
         "brokerId" to "1234",  // BROKER ID
         "appId" to "rf_ktrader_1.0.0",  // APPID
         "authCode" to "ASDFGHJKL",  // 授权码
-        "cachePath" to "./build/flow/",  // 本地缓存文件存储目录
+        "cachePath" to "./data/ctp",  // 本地缓存文件存储目录
         "disableAutoSubscribe" to false,  // 是否禁用自动订阅
         "disableFeeCalculation" to false,  // 是否禁用费用计算
     )
@@ -149,7 +149,7 @@ repositories {
 }
 
 dependencies {
-    implementation("org.rationalityfrontline.ktrader:ktrader-broker-ctp:1.1.2")
+    implementation("org.rationalityfrontline.ktrader:ktrader-broker-ctp:1.1.3")
     // 如果需要使用其它版本的 JCTP，取消注释下面一行，并填入自己需要的版本号
 //    implementation("org.rationalityfrontline:jctp") { version { strictly("6.6.1_P1_CP-1.0.0") } }
 }
@@ -161,7 +161,7 @@ dependencies {
 <dependency>
     <groupId>org.rationalityfrontline.ktrader</groupId>
     <artifactId>ktrader-broker-ctp</artifactId>
-    <version>1.1.2</version>
+    <version>1.1.3</version>
 </dependency>
 ```
 
