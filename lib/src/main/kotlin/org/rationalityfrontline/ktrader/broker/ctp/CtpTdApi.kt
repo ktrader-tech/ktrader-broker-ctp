@@ -136,11 +136,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 做多订单的最高挂单价，用于检测自成交
      */
-    private val maxLongPrice: Double get() = unfinishedLongOrders.firstOrNull()?.price ?: Double.MIN_VALUE
+    private val maxLongPrice: Double get() = unfinishedLongOrders.firstOrNull()?.price ?: Double.NEGATIVE_INFINITY
     /**
      * 做空订单的最低挂单价，用于检测自成交
      */
-    private val minShortPrice: Double get() = unfinishedShortOrders.lastOrNull()?.price ?: Double.MAX_VALUE
+    private val minShortPrice: Double get() = unfinishedShortOrders.lastOrNull()?.price ?: Double.POSITIVE_INFINITY
     /**
      * 合约撤单次数统计，用于检测频繁撤单，key 为 code，value 为撤单次数
      */
@@ -1396,7 +1396,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     }
                     // 登录操作完成
                     connected = true
-                    postBrokerConnectionEvent(ConnectionEventType.TD_NET_CONNECTED)
+                    postBrokerConnectionEvent(ConnectionEventType.TD_LOGGED_IN)
                     resumeRequests("connect", Unit)
                 } catch (e: Exception) {  // 登录操作失败
                     resumeRequestsWithException("connect", e.message ?: e.toString())
@@ -1655,7 +1655,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         val position = queryCachedPosition(order.code, order.direction, true)
                         if (position != null) {
                             when (newOrderStatus) {
-                                OrderStatus.SUBMITTING -> {
+                                OrderStatus.ACCEPTED -> {
                                     position.frozenVolume += order.volume
                                     position.closeableVolume -= order.volume
                                 }
