@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "org.rationalityfrontline.ktrader"
-version = "1.1.3"
+version = "1.2.0"
 val NAME = "ktrader-broker-ctp"
 val DESC = "CTP implementation of KTrader-Broker-API"
 val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
@@ -17,12 +17,13 @@ val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = "broker-ctp-rf"
 val pluginVersion = version as String
-val pluginRequires = "1.1.3"
+val pluginRequires = "1.2.0"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"
 
 repositories {
+    mavenLocal()
     mavenCentral()
 }
 

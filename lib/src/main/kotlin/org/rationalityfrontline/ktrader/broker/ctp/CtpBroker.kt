@@ -12,7 +12,7 @@ class CtpBroker : Broker() {
     override val configKeys: List<Pair<String, String>> = CtpBrokerInfo.configKeys
     override val methodExtras: List<Pair<String, String>> = CtpBrokerInfo.methodExtras
 
-    override fun createApi(config: Map<String, Any>, kEvent: KEvent): BrokerApi {
-        return CtpBrokerApi(config, kEvent)
+    override fun createApi(config: Map<String, String>, kEvent: KEvent): BrokerApi {
+        return CtpBrokerApi(CtpBrokerInfo.parseConfig(config), kEvent)
     }
 }

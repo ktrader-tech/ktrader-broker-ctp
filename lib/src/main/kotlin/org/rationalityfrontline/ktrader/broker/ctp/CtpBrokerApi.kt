@@ -7,28 +7,27 @@ import org.rationalityfrontline.ktrader.broker.api.BrokerApi
 import org.rationalityfrontline.ktrader.datatype.*
 import java.time.LocalDate
 
-class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config, kEvent) {
-
-    private val ctpConfig: CtpConfig = CtpBrokerInfo.parseConfig(config)
+class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerApi {
+    
     private val mdApi: CtpMdApi
     private val tdApi: CtpTdApi
 
     override val name: String = CtpBrokerInfo.name
     override val version: String = CtpBrokerInfo.version
-    override val account: String = ctpConfig.investorId
+    override val account: String = this.config.investorId
     override val mdConnected: Boolean get() = mdApi.connected
     override val tdConnected: Boolean get() = tdApi.connected
 
     init {
-        mdApi = CtpMdApi(ctpConfig, kEvent, sourceId)
-        tdApi = CtpTdApi(ctpConfig, kEvent, sourceId)
+        mdApi = CtpMdApi(this.config, kEvent, sourceId)
+        tdApi = CtpTdApi(this.config, kEvent, sourceId)
         mdApi.tdApi = tdApi
         tdApi.mdApi = mdApi
     }
 
-    override suspend fun connect(connectMd: Boolean, connectTd: Boolean, extras: Map<String, Any>?) {
-        if (connectMd && !mdConnected) mdApi.connect()
-        if (connectTd && !tdConnected) tdApi.connect()
+    override suspend fun connect(extras: Map<String, String>?) {
+        if (!mdConnected) mdApi.connect()
+        if (!tdConnected) tdApi.connect()
     }
 
     override fun close() {
@@ -45,42 +44,50 @@ class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config,
         return if (tradingDay == null) {
             throw Exception("行情前置与交易前置均不可用，无法获取当前交易日")
         } else {
-            LocalDate.parse("${tradingDay.slice(0..3)}-${tradingDay.slice(4..5)}-${tradingDay.slice(6..7)}")
+            Converter.dateC2A(tradingDay)
         }
     }
 
-    override suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, Any>?) {
+    override suspend fun subscribeTicks(codes: Collection<String>, extras: Map<String, String>?) {
         mdApi.subscribeMarketData(codes, extras)
     }
 
-    override suspend fun unsubscribeMarketData(codes: Collection<String>, extras: Map<String, Any>?) {
+    override suspend fun unsubscribeTicks(codes: Collection<String>, extras: Map<String, String>?) {
         mdApi.unsubscribeMarketData(codes, extras)
     }
 
-    override suspend fun subscribeAllMarketData(extras: Map<String, Any>?) {
+    override suspend fun subscribeAllTicks(extras: Map<String, String>?) {
         mdApi.subscribeAllMarketData(extras)
     }
 
-    override suspend fun unsubscribeAllMarketData(extras: Map<String, Any>?) {
+    override suspend fun unsubscribeAllTicks(extras: Map<String, String>?) {
         mdApi.unsubscribeAllMarketData(extras)
+    }
+
+    override suspend fun subscribeTick(code: String, extras: Map<String, String>?) {
+        subscribeTicks(listOf(code), extras)
+    }
+
+    override suspend fun unsubscribeTick(code: String, extras: Map<String, String>?) {
+        unsubscribeTicks(listOf(code), extras)
     }
 
     /**
      * [useCache] 无效，总是查询本地维护的数据，CTP 无此查询接口
      */
-    override suspend fun querySubscriptions(useCache: Boolean, extras: Map<String, Any>?): List<String> {
+    override suspend fun queryTickSubscriptions(useCache: Boolean, extras: Map<String, String>?): List<String> {
         return mdApi.querySubscriptions(useCache, extras)
     }
 
-    override suspend fun queryLastTick(code: String, useCache: Boolean, extras: Map<String, Any>?): Tick? {
+    override suspend fun queryLastTick(code: String, useCache: Boolean, extras: Map<String, String>?): Tick? {
         return runWithRetry({ tdApi.queryLastTick(code, useCache, extras) })
     }
 
-    override suspend fun querySecurity(code: String, useCache: Boolean, extras: Map<String, Any>?): SecurityInfo? {
+    override suspend fun querySecurity(code: String, useCache: Boolean, extras: Map<String, String>?): SecurityInfo? {
         return runWithRetry({ tdApi.queryInstrument(code, useCache, extras) })
     }
 
-    override suspend fun queryAllSecurities(useCache: Boolean, extras: Map<String, Any>?): List<SecurityInfo> {
+    override suspend fun queryAllSecurities(useCache: Boolean, extras: Map<String, String>?): List<SecurityInfo> {
         return runWithRetry({ tdApi.queryAllInstruments(useCache, extras) })
     }
 
@@ -91,56 +98,68 @@ class CtpBrokerApi(config: Map<String, Any>, kEvent: KEvent) : BrokerApi(config,
         direction: Direction,
         offset: OrderOffset,
         orderType: OrderType,
-        extras: Map<String, Any>?
+        extras: Map<String, String>?
     ): Order {
         return tdApi.insertOrder(code, price, volume, direction, offset, orderType, extras)
     }
 
-    override suspend fun cancelOrder(orderId: String, extras: Map<String, Any>?) {
+    override suspend fun cancelOrder(orderId: String, extras: Map<String, String>?) {
         tdApi.cancelOrder(orderId, extras)
     }
 
-    override suspend fun queryOrder(orderId: String, useCache: Boolean, extras: Map<String, Any>?): Order? {
+    override suspend fun cancelAllOrders(extras: Map<String, String>?) {
+        queryOrders(onlyUnfinished = true).forEach { cancelOrder(it.orderId) }
+    }
+
+    override suspend fun queryOrder(orderId: String, useCache: Boolean, extras: Map<String, String>?): Order? {
         return runWithRetry({ tdApi.queryOrder(orderId, useCache, extras) })
     }
 
-    override suspend fun queryOrders(code: String?, onlyUnfinished: Boolean, useCache: Boolean, extras: Map<String, Any>?): List<Order> {
+    override suspend fun queryOrders(code: String?, onlyUnfinished: Boolean, useCache: Boolean, extras: Map<String, String>?): List<Order> {
         return runWithRetry({ tdApi.queryOrders(code, onlyUnfinished, useCache, extras) })
     }
 
-    override suspend fun queryTrade(tradeId: String, useCache: Boolean, extras: Map<String, Any>?): Trade? {
+    override suspend fun queryTrade(tradeId: String, useCache: Boolean, extras: Map<String, String>?): Trade? {
         return runWithRetry({ tdApi.queryTrade(tradeId, useCache, extras) })
     }
 
-    override suspend fun queryTrades(code: String?, orderId: String?, useCache: Boolean, extras: Map<String, Any>?): List<Trade> {
+    override suspend fun queryTrades(code: String?, orderId: String?, useCache: Boolean, extras: Map<String, String>?): List<Trade> {
         return runWithRetry({ tdApi.queryTrades(code, orderId, useCache, extras) })
     }
 
-    override suspend fun queryAssets(useCache: Boolean, extras: Map<String, Any>?): Assets {
+    override suspend fun queryAssets(useCache: Boolean, extras: Map<String, String>?): Assets {
         return runWithRetry({ tdApi.queryAssets(useCache, extras) })
     }
 
-    override suspend fun queryPosition(code: String, direction: Direction, useCache: Boolean, extras: Map<String, Any>?): Position? {
+    override suspend fun queryPosition(code: String, direction: Direction, useCache: Boolean, extras: Map<String, String>?): Position? {
         return runWithRetry({ tdApi.queryPosition(code, direction, useCache, extras) })
     }
 
-    override suspend fun queryPositions(code: String?, useCache: Boolean, extras: Map<String, Any>?): List<Position> {
+    override suspend fun queryPositionDetails(code: String, direction: Direction, useCache: Boolean, extras: Map<String, String>?): PositionDetails? {
+        return runWithRetry({ tdApi.queryPositionDetails(code, direction, useCache, extras) })
+    }
+
+    override suspend fun queryPositionDetails(code: String?, useCache: Boolean, extras: Map<String, String>?): List<PositionDetails> {
+        return runWithRetry({ tdApi.queryPositionDetails(code, useCache, extras) })
+    }
+
+    override suspend fun queryPositions(code: String?, useCache: Boolean, extras: Map<String, String>?): List<Position> {
         return runWithRetry({ tdApi.queryPositions(code, useCache, extras) })
     }
 
-    override suspend fun prepareFeeCalculation(codes: Collection<String>?, extras: Map<String, Any>?) {
+    override suspend fun prepareFeeCalculation(codes: Collection<String>?, extras: Map<String, String>?) {
         tdApi.prepareFeeCalculation(codes, extras)
     }
 
-    override fun calculatePosition(position: Position, extras: Map<String, Any>?) {
+    override fun calculatePosition(position: Position, extras: Map<String, String>?) {
         tdApi.calculatePosition(position, extras = extras)
     }
 
-    override fun calculateOrder(order: Order, extras: Map<String, Any>?) {
+    override fun calculateOrder(order: Order, extras: Map<String, String>?) {
         tdApi.calculateOrder(order, extras)
     }
 
-    override fun calculateTrade(trade: Trade, extras: Map<String, Any>?) {
+    override fun calculateTrade(trade: Trade, extras: Map<String, String>?) {
         tdApi.calculateTrade(trade, extras)
     }
 }

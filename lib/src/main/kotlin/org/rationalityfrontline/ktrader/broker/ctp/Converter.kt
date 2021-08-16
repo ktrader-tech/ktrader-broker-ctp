@@ -11,13 +11,17 @@ import java.time.format.DateTimeFormatter
  * 翻译器，用于将本地的 CTP 信息翻译为标准的 BrokerApi 信息
  */
 @Suppress("MemberVisibilityCanBePrivate")
-internal object Translator {
+internal object Converter {
 
     private val THOST_FTDC_OF_Open_S = jctpConstants.THOST_FTDC_OF_Open.toString()
     private val THOST_FTDC_OF_Close_S = jctpConstants.THOST_FTDC_OF_Close.toString()
     private val THOST_FTDC_OF_CloseToday_S = jctpConstants.THOST_FTDC_OF_CloseToday.toString()
     private val THOST_FTDC_OF_CloseYesterday_S = jctpConstants.THOST_FTDC_OF_CloseYesterday.toString()
     val THOST_FTDC_HF_Speculation = jctpConstants.THOST_FTDC_HF_Speculation.toString()
+
+    fun dateC2A(date: String): LocalDate {
+        return LocalDate.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}")
+    }
 
     fun marginPriceTypeC2A(type: Char): MarginPriceType {
         return when (type) {
@@ -254,7 +258,6 @@ internal object Translator {
             volume = positionField.position,
             value = positionField.useMargin,
             todayVolume = positionField.todayPosition,
-            yesterdayVolume = positionField.position - positionField.todayPosition,
             frozenVolume = frozenVolume,
             closeableVolume = positionField.position - frozenVolume,
             todayOpenVolume = positionField.openVolume,
@@ -275,6 +278,10 @@ internal object Translator {
             positionValue = assetsField.currMargin,
             frozenByOrder = assetsField.frozenCash,
             todayCommission = assetsField.commission,
+            initialCash = 0.0,
+            totalClosePnl = 0.0,
+            totalCommission = 0.0,
+            positionPnl = 0.0,
         )
     }
 

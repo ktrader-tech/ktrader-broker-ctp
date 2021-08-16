@@ -162,14 +162,14 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询当前已订阅的合约。[useCache] 及 [extras] 参数暂时无用
      */
-    fun querySubscriptions(useCache: Boolean, extras: Map<String, Any>?): List<String> = subscriptions.toList()
+    fun querySubscriptions(useCache: Boolean, extras: Map<String, String>?): List<String> = subscriptions.toList()
 
     /**
      * 订阅行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复订阅。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
      */
-    suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, Any>? = null) {
+    suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, String>? = null) {
         if (codes.isEmpty()) return
-        val filteredCodes = if (extras?.get("isForce") != true) codes.filter { it !in subscriptions } else codes
+        val filteredCodes = if (extras?.get("isForce") != "true") codes.filter { it !in subscriptions } else codes
         if (filteredCodes.isEmpty()) return
         // CTP 行情订阅目前（2021.07）每34个订阅会丢失一个订阅（OnRspSubMarketData 中会每34个回调返回一个 bIsLast 为 true），所以需要分割
         if (filteredCodes.size >= 34) {
@@ -198,9 +198,9 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 退订行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复退订。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
      */
-    suspend fun unsubscribeMarketData(codes: Collection<String>, extras: Map<String, Any>? = null) {
+    suspend fun unsubscribeMarketData(codes: Collection<String>, extras: Map<String, String>? = null) {
         if (codes.isEmpty()) return
-        val filteredCodes = if (extras?.get("isForce") != true) codes.filter { it in subscriptions } else codes
+        val filteredCodes = if (extras?.get("isForce") != "true") codes.filter { it in subscriptions } else codes
         if (filteredCodes.isEmpty()) return
         val rawCodes = filteredCodes.map { parseCode(it).second }.toTypedArray()
         val requestId = nextRequestId()
@@ -214,7 +214,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 订阅全市场合约行情。会自动检查合约订阅状态防止重复订阅。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
      */
-    suspend fun subscribeAllMarketData(extras: Map<String, Any>? = null) {
+    suspend fun subscribeAllMarketData(extras: Map<String, String>? = null) {
         val codes = tdApi.instruments.keys
         if (codes.isEmpty()) throw Exception("交易前置未连接，无法获得全市场合约")
         subscribeMarketData(codes, extras)
@@ -223,7 +223,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 退订所有已订阅的合约行情。会自动检查合约订阅状态防止重复退订。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
      */
-    suspend fun unsubscribeAllMarketData(extras: Map<String, Any>? = null) {
+    suspend fun unsubscribeAllMarketData(extras: Map<String, String>? = null) {
         unsubscribeMarketData(subscriptions.toList(), extras)
     }
 
@@ -298,7 +298,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 // 如果当日已订阅列表不为空，则说明发生了日内断网重连，自动重新订阅
                 if (subscriptions.isNotEmpty() && tradingDay == pRspUserLogin.tradingDay) {
                     runBlocking {
-                        runWithRetry({ subscribeMarketData(subscriptions.toList(), mapOf("isForce" to true)) }, { e ->
+                        runWithRetry({ subscribeMarketData(subscriptions.toList(), mapOf("isForce" to "true")) }, { e ->
                             postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情失败：$e")
                         })
                     }
@@ -380,7 +380,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         override fun OnRtnDepthMarketData(data: CThostFtdcDepthMarketDataField) {
             val code = getCode(data.instrumentID)
             val lastTick = lastTicks[code]
-            val newTick = Translator.tickC2A(code, data, lastTick, tdApi.instruments[code]?.volumeMultiple, tdApi.getInstrumentStatus(code)) { e ->
+            val newTick = Converter.tickC2A(code, data, lastTick, tdApi.instruments[code]?.volumeMultiple, tdApi.getInstrumentStatus(code)) { e ->
                 postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
             }
             lastTicks[code] = newTick

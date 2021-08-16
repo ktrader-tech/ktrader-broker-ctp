@@ -5,9 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import org.rationalityfrontline.jctp.CThostFtdcRspInfoField
-import org.rationalityfrontline.ktrader.datatype.Order
-import org.rationalityfrontline.ktrader.datatype.Position
-import org.rationalityfrontline.ktrader.datatype.Trade
+import org.rationalityfrontline.ktrader.datatype.*
 import kotlin.coroutines.Continuation
 
 /**
@@ -141,10 +139,19 @@ internal data class QueryOrdersData(
 )
 
 /**
+ * 用于记录持仓明细查询请求的参数以及保存查询的结果
+ */
+internal data class QueryPositionDetailsData(
+    val code: String? = null,
+    val direction: Direction? = null,
+    val results: MutableList<PositionDetails> = mutableListOf()
+)
+
+/**
  * Order 的扩展字段，存储于 extras 中。格式为 exchangeId_orderSysId
  */
 var Order.orderSysId: String
-    get() = extras?.get("orderSysId") as String? ?: ""
+    get() = extras?.get("orderSysId") ?: ""
     set(value) {
         if (extras == null) {
             extras = mutableMapOf()
@@ -156,7 +163,7 @@ var Order.orderSysId: String
  * Order 的扩展字段，以 String 格式存储于 extras 中。标记该 order 是否计算过挂单费用（仅限中金所）
  */
 var Order.insertFeeCalculated: Boolean
-    get() = (extras?.get("insertFeeCalculated") as String? ?: "false").toBoolean()
+    get() = (extras?.get("insertFeeCalculated") ?: "false").toBoolean()
     set(value) {
         if (extras == null) {
             extras = mutableMapOf()
@@ -168,7 +175,7 @@ var Order.insertFeeCalculated: Boolean
  * Order 的扩展字段，以 String 格式存储于 extras 中。标记该 order 是否计算过撤单费用（仅限中金所）
  */
 var Order.cancelFeeCalculated: Boolean
-    get() = (extras?.get("cancelFeeCalculated") as String? ?: "false").toBoolean()
+    get() = (extras?.get("cancelFeeCalculated") ?: "false").toBoolean()
     set(value) {
         if (extras == null) {
             extras = mutableMapOf()

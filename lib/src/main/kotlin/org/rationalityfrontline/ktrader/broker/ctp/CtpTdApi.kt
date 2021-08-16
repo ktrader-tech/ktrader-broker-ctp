@@ -19,6 +19,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import kotlin.math.max
+import kotlin.math.sign
 
 internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) {
     private val tdApi: CThostFtdcTraderApi
@@ -108,7 +109,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 本地缓存的资产信息，并不维护
      */
-    private val assets: Assets = Assets(config.investorId, 0.0, 0.0, 0.0, 0.0, 0.0)
+    private val assets: Assets = Assets(config.investorId, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     /**
      * 上次查询账户资产的时间
      */
@@ -292,7 +293,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         direction: Direction,
         offset: OrderOffset,
         orderType: OrderType,
-        extras: Map<String, Any>? = null
+        extras: Map<String, String>? = null
     ): Order {
         val (exchangeId, instrumentId) = parseCode(code)
         val orderRef = nextOrderRef().toString()
@@ -311,11 +312,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 exchangeID = exchangeId
                 instrumentID = instrumentId
                 limitPrice = price
-                this.direction = Translator.directionA2C(direction)
+                this.direction = Converter.directionA2C(direction)
                 volumeTotalOriginal = volume
                 volumeCondition = THOST_FTDC_VC_AV
-                combOffsetFlag = Translator.offsetA2C(offset)
-                combHedgeFlag = Translator.THOST_FTDC_HF_Speculation
+                combOffsetFlag = Converter.offsetA2C(offset)
+                combHedgeFlag = Converter.THOST_FTDC_HF_Speculation
                 contingentCondition = THOST_FTDC_CC_Immediately
                 forceCloseReason = THOST_FTDC_FCC_NotForceClose
                 isAutoSuspend = 0
@@ -328,9 +329,10 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     OrderType.FAK -> {
                         orderPriceType = THOST_FTDC_OPT_LimitPrice
                         timeCondition = THOST_FTDC_TC_IOC
-                        if (extras?.contains("minVolume") == true) {
+                        val rawMinVolume = extras?.get("minVolume")?.toIntOrNull()
+                        if (rawMinVolume != null) {
                             volumeCondition = THOST_FTDC_VC_MV
-                            minVolume = extras["minVolume"] as Int
+                            minVolume = rawMinVolume
                         }
                     }
                     OrderType.FOK -> {
@@ -357,7 +359,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             OrderStatus.SUBMITTING, "报单已提交",
             0, 0.0, 0.0, 0.0, 0.0,
             now, now,
-            extras = mutableMapOf<String, Any>().apply {
+            extras = mutableMapOf<String, String>().apply {
                 if (extras != null) {
                     putAll(extras)
                 }
@@ -377,7 +379,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 撤单，会自动检查撤单次数是否达到 499 次上限。[orderId] 格式为 frontId_sessionId_orderRef
      */
-    suspend fun cancelOrder(orderId: String, extras: Map<String, Any>? = null) {
+    suspend fun cancelOrder(orderId: String, extras: Map<String, String>? = null) {
         val cancelReqField = CThostFtdcInputOrderActionField().apply {
             brokerID = config.brokerId
             investorID = config.investorId
@@ -416,7 +418,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询最新 [Tick]
      */
-    suspend fun queryLastTick(code: String, useCache: Boolean, extras: Map<String, Any>? = null): Tick? {
+    suspend fun queryLastTick(code: String, useCache: Boolean, extras: Map<String, String>? = null): Tick? {
         if (useCache) {
             val cachedTick = mdApi.lastTicks[code]
             if (cachedTick != null) {
@@ -439,11 +441,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询某一特定合约的信息。[extras.queryFee: Boolean = false]【是否查询保证金率及手续费率，如果之前没查过，可能会耗时。当 useCache 为 false 时无效】
      */
-    suspend fun queryInstrument(code: String, useCache: Boolean = true, extras: Map<String, Any>? = null): SecurityInfo? {
+    suspend fun queryInstrument(code: String, useCache: Boolean = true, extras: Map<String, String>? = null): SecurityInfo? {
         if (useCache) {
             val cachedInstrument = instruments[code]
             if (cachedInstrument != null) {
-                if (extras?.get("queryFee") == true) {
+                if (extras?.get("queryFee") == "true") {
                     prepareFeeCalculation(code)
                 }
                 return cachedInstrument
@@ -465,7 +467,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询全市场合约的信息
      */
-    suspend fun queryAllInstruments(useCache: Boolean = true, extras: Map<String, Any>? = null): List<SecurityInfo> {
+    suspend fun queryAllInstruments(useCache: Boolean = true, extras: Map<String, String>? = null): List<SecurityInfo> {
         if (useCache && instruments.isNotEmpty()) return instruments.values.toList()
         val qryField = CThostFtdcQryInstrumentField()
         val requestId = nextRequestId()
@@ -479,7 +481,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 依据 [orderId] 查询 [Order]。[orderId] 格式为 frontId_sessionId_orderRef。未找到对应订单时返回 null。
      */
-    suspend fun queryOrder(orderId: String, useCache: Boolean = true, extras: Map<String, Any>? = null): Order? {
+    suspend fun queryOrder(orderId: String, useCache: Boolean = true, extras: Map<String, String>? = null): Order? {
         if (useCache) {
             var order: Order? = todayOrders[orderId.split("_").last()] ?: todayOrders[orderId]
             if (order != null && order.orderId != orderId) {
@@ -505,7 +507,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询订单
      */
-    suspend fun queryOrders(code: String? = null, onlyUnfinished: Boolean = true, useCache: Boolean = true, extras: Map<String, Any>? = null): List<Order> {
+    suspend fun queryOrders(code: String? = null, onlyUnfinished: Boolean = true, useCache: Boolean = true, extras: Map<String, String>? = null): List<Order> {
         if (useCache) {
             var orders: List<Order> = if (onlyUnfinished) {
                 mutableListOf<Order>().apply {
@@ -543,7 +545,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 依据 [tradeId] 查询 [Trade]。[tradeId] 格式为 tradeId_orderRef。未找到对应成交记录时返回 null。
      */
-    suspend fun queryTrade(tradeId: String, useCache: Boolean = true, extras: Map<String, Any>? = null): Trade? {
+    suspend fun queryTrade(tradeId: String, useCache: Boolean = true, extras: Map<String, String>? = null): Trade? {
         if (useCache) {
             val trade = todayTrades.find { it.tradeId == tradeId }
             if (trade != null) return trade
@@ -564,7 +566,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询成交记录
      */
-    suspend fun queryTrades(code: String? = null,  orderId: String? = null, useCache: Boolean = true, extras: Map<String, Any>? = null): List<Trade> {
+    suspend fun queryTrades(code: String? = null,  orderId: String? = null, useCache: Boolean = true, extras: Map<String, String>? = null): List<Trade> {
         if (useCache) {
             return when {
                 orderId != null -> todayTrades.filter { it.orderId == orderId }
@@ -602,7 +604,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询账户资金信息
      */
-    suspend fun queryAssets(useCache: Boolean = true, extras: Map<String, Any>? = null): Assets {
+    suspend fun queryAssets(useCache: Boolean = true, extras: Map<String, String>? = null): Assets {
         // 10 秒内，使用上次查询结果
         if (useCache && System.currentTimeMillis() - lastQueryAssetsTime < 10000) {
             return assets.copy()
@@ -636,7 +638,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询合约 [code] 的 [direction] 方向的持仓信息
      */
-    suspend fun queryPosition(code: String, direction: Direction, useCache: Boolean = true, extras: Map<String, Any>? = null): Position? {
+    suspend fun queryPosition(code: String, direction: Direction, useCache: Boolean = true, extras: Map<String, String>? = null): Position? {
         if (direction == Direction.UNKNOWN) return null
         return if (useCache) {
             queryCachedPosition(code, direction)?.copy()
@@ -656,7 +658,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 查询持仓信息，如果 [code] 为 null（默认），则查询账户整体持仓信息
      */
-    suspend fun queryPositions(code: String? = null, useCache: Boolean = true, extras: Map<String, Any>? = null): List<Position> {
+    suspend fun queryPositions(code: String? = null, useCache: Boolean = true, extras: Map<String, String>? = null): List<Position> {
         if (useCache) {
             val positionList = mutableListOf<Position>()
             // 查询全体持仓
@@ -684,6 +686,39 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
             })
         }
+    }
+
+    /**
+     * 查询合约 [code] 的 [direction] 方向的持仓明细
+     */
+    suspend fun queryPositionDetails(code: String, direction: Direction, useCache: Boolean, extras: Map<String, String>?): PositionDetails? {
+        val qryField = CThostFtdcQryInvestorPositionDetailField().apply {
+            brokerID = config.brokerId
+            investorID = config.investorId
+            instrumentID = parseCode(code).second
+        }
+        val requestId = nextRequestId()
+        return runWithResultCheck({ tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }, {
+            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code, direction))
+            }
+        })
+    }
+
+    /**
+     * 查询持仓明细，如果 [code] 为 null（默认），则查询账户整体持仓明细
+     */
+    suspend fun queryPositionDetails(code: String?, useCache: Boolean, extras: Map<String, String>?): List<PositionDetails> {
+        val qryField = CThostFtdcQryInvestorPositionDetailField().apply {
+            brokerID = config.brokerId
+            investorID = config.investorId
+        }
+        val requestId = nextRequestId()
+        return runWithResultCheck({ tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }, {
+            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code))
+            }
+        })
     }
 
     /**
@@ -741,7 +776,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
 
     /**
      * 查询期权保证金，如果 [code] 为 null（默认），则查询所有当前持仓合约的保证金。
-     * 已查过保证金的不会再次查询。查询到的结果会自动更新到对应的 [instruments] 中，字段映射参见 [Translator.optionsMarginC2A]
+     * 已查过保证金的不会再次查询。查询到的结果会自动更新到对应的 [instruments] 中，字段映射参见 [Converter.optionsMarginC2A]
      */
     private suspend fun queryOptionsMargin(code: String? = null) {
         if (code == null) {
@@ -936,7 +971,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 查询手续费率及保证金率，只有查过费率的合约，其返回的 [Trade], [Order], [Position] 才会带有手续费、保证金等相关信息。
      * 查询到的结果会自动更新到对应的 [instruments] 中，已经查过的不会再次查询
      */
-    suspend fun prepareFeeCalculation(codes: Collection<String>? = null, extras: Map<String, Any>? = null) {
+    suspend fun prepareFeeCalculation(codes: Collection<String>? = null, extras: Map<String, String>? = null) {
         if (codes == null) {
             runWithRetry({ queryFuturesCommissionRate() })
             runWithRetry({ queryFuturesMarginRate() })
@@ -1071,7 +1106,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 计算 Position 的 value, avgOpenPrice, lastPrice, pnl
      * @param calculateValue 是否计算保证金，默认为 true
      */
-    fun calculatePosition(position: Position, calculateValue: Boolean = true, extras: Map<String, Any>? = null) {
+    fun calculatePosition(position: Position, calculateValue: Boolean = true, extras: Map<String, String>? = null) {
         val instrument = instruments[position.code] ?: return
         if (instrument.type == SecurityType.FUTURES || instrument.type == SecurityType.OPTIONS) {
             // 计算开仓均价
@@ -1106,7 +1141,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 计算 Order 的 avgFillPrice, frozenCash, 申报手续费（仅限中金所股指期货）。turnover 由 OnRtnTrade 中的 Trade.turnover 累加得到。
      */
-    fun calculateOrder(order: Order, extras: Map<String, Any>? = null) {
+    fun calculateOrder(order: Order, extras: Map<String, String>? = null) {
         val instrument = instruments[order.code] ?: return
         if (instrument.type == SecurityType.FUTURES || instrument.type == SecurityType.OPTIONS) {
             // 计算成交均价
@@ -1151,7 +1186,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 计算 Trade 的 turnover 与 commission，如果是平仓会依据 [Trade.offset] 判断是否按平今计算手续费
      */
-    fun calculateTrade(trade: Trade, extras: Map<String, Any>? = null) {
+    fun calculateTrade(trade: Trade, extras: Map<String, String>? = null) {
         val instrument = instruments[trade.code] ?: return
         when (instrument.type) {
             SecurityType.FUTURES,
@@ -1255,6 +1290,17 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 else -> MarketStatus.UNKNOWN
             }
             productStatusMap[pInstrumentStatus.instrumentID] = marketStatus
+            if (connected) {  // 过滤当日重放的数据
+                val ticks = mdApi.lastTicks.values.filter { codeProductMap[it.code] == pInstrumentStatus.instrumentID }
+                if (ticks.isNotEmpty()) {
+                    try {
+                        val enterTime = LocalTime.parse(pInstrumentStatus.enterTime).atDate(LocalDate.now())
+                        ticks.forEach { postBrokerEvent(BrokerEventType.TICK, it.copy(status = marketStatus, time = enterTime, volume = 0, turnover = 0.0, openInterestDelta = 0)) }
+                    } catch (e: Exception) {
+                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnInstrumentStatus】解析 enterTime 失败：$e")
+                    }
+                }
+            }
         }
 
         /**
@@ -1489,6 +1535,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         todayCommission = 0.0
                     }
                     positions.clear()
+                    postBrokerEvent(BrokerEventType.NEW_TRADING_DAY, Converter.dateC2A(tradingDay))
                 }
                 if (bIsLast) {
                     (request.continuation as Continuation<Unit>).resume(Unit)
@@ -1579,8 +1626,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 // 如果是第一次接收回报，则创建并缓存该订单，之后局部变量 order 不为 null
                 if (order == null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
-                    order = Translator.orderC2A(pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
-                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】 Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                    order = Converter.orderC2A(pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
+                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     calculateOrder(order)
                     todayOrders[orderId] = order
@@ -1677,7 +1724,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             LocalDateTime.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${pOrder.insertTime}")
                         }
                     } catch (e: Exception) {
-                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】 Order updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                         LocalDateTime.now()
                     }
                     order.updateTime = updateTime
@@ -1698,7 +1745,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知订单的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                 }
             }
-            val trade = Translator.tradeC2A(pTrade, order?.orderId ?: orderSysId) { e ->
+            val trade = Converter.tradeC2A(pTrade, order?.orderId ?: orderSysId) { e ->
                 postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
             }
             val instrument = instruments[trade.code] ?: return
@@ -1711,8 +1758,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (biPosition.long == null) {
                         biPosition.long = Position(
                             config.investorId,
-                            trade.code, Direction.LONG, 0, 0, 0.0, 0, 0, 0, 0,
-                            0, 0, 0.0, 0.0, 0.0, 0.0, 0.0
+                            trade.code, Direction.LONG, 0, 0, 0, 0, 0, 0,
+                            0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                         )
                     }
                     biPosition.long
@@ -1722,8 +1769,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (biPosition.short == null) {
                         biPosition.short = Position(
                             config.investorId,
-                            trade.code, Direction.SHORT, 0, 0, 0.0, 0, 0, 0, 0,
-                            0, 0, 0.0, 0.0, 0.0, 0.0, 0.0
+                            trade.code, Direction.SHORT, 0, 0, 0, 0, 0, 0,
+                            0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                         )
                     }
                     biPosition.short
@@ -1805,7 +1852,6 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     val totalClosed = todayClosed + yesterdayClosed
                     position.volume -= totalClosed
                     position.todayVolume -= todayClosed
-                    position.yesterdayVolume -= yesterdayClosed
                     position.todayCloseVolume += totalClosed
                     position.frozenVolume -= totalClosed
                     // 由于未知持仓明细，因此此处只按开仓均价减去对应开仓成本，保持开仓均价不变，为此查询持仓明细太麻烦了
@@ -1855,7 +1901,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val reqData = request.data as QueryOrdersData
                 if (pOrder != null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
-                    val order = Translator.orderC2A(pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
+                    val order = Converter.orderC2A(pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryOrder】Order time 解析失败：${"${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     reqData.results.add(order)
@@ -1904,7 +1950,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRspQryTrade】未找到对应订单：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                         }
                     }
-                    val trade = Translator.tradeC2A(pTrade, order?.orderId ?: orderSysId) { e ->
+                    val trade = Converter.tradeC2A(pTrade, order?.orderId ?: orderSysId) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
                     }
                     reqData.results.add(trade)
@@ -1950,7 +1996,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 val code = "${pDepthMarketData.exchangeID}.${pDepthMarketData.instrumentID}"
                 if (code == reqCode) {
-                    val tick = Translator.tickC2A(code, pDepthMarketData, volumeMultiple = instruments[code]?.volumeMultiple, marketStatus = getInstrumentStatus(code)) { e ->
+                    val tick = Converter.tickC2A(code, pDepthMarketData, volumeMultiple = instruments[code]?.volumeMultiple, marketStatus = getInstrumentStatus(code)) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryDepthMarketData】Tick updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
                     }
                     cachedTickMap[code] = tick
@@ -1980,7 +2026,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             val request = requestMap[nRequestID] ?: return
             val reqData = request.data
             val instrument = pInstrument?.let {
-                Translator.securityC2A(pInstrument) { e ->
+                Converter.securityC2A(pInstrument) { e ->
                     postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryInstrument】Instrument 解析失败(${pInstrument.exchangeID}.${pInstrument.instrumentID})：$e")
                 }
             }
@@ -2032,7 +2078,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     requestMap.remove(nRequestID)
                     return
                 }
-                (request.continuation as Continuation<Assets>).resume(Translator.assetsC2A(pTradingAccount))
+                (request.continuation as Continuation<Assets>).resume(Converter.assetsC2A(pTradingAccount))
                 requestMap.remove(nRequestID)
                 lastQueryAssetsTime = System.currentTimeMillis()
             }, { errorCode, errorMsg ->
@@ -2054,14 +2100,14 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             checkRspInfo(pRspInfo, {
                 val posList = request.data as MutableList<Position>
                 if (pInvestorPosition != null) {
-                    val direction = Translator.directionC2A(pInvestorPosition.posiDirection)
+                    val direction = Converter.directionC2A(pInvestorPosition.posiDirection)
                     val code = "${pInvestorPosition.exchangeID}.${pInvestorPosition.instrumentID}"
                     var mergePosition: Position? = null
                     if (pInvestorPosition.exchangeID == ExchangeID.SHFE || pInvestorPosition.exchangeID == ExchangeID.INE) {
                         mergePosition = posList.find { it.code == code && it.direction == direction }
                     }
                     if (mergePosition == null) {
-                        posList.add(Translator.positionC2A(pInvestorPosition))
+                        posList.add(Converter.positionC2A(pInvestorPosition))
                     } else {
                         mergePosition.apply {
                             volume += pInvestorPosition.position
@@ -2075,9 +2121,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                                     todayVolume += pInvestorPosition.todayPosition
                                     todayOpenVolume += pInvestorPosition.openVolume
                                 }
-                                THOST_FTDC_PSD_History -> {
-                                    yesterdayVolume += pInvestorPosition.ydPosition
-                                }
+                                THOST_FTDC_PSD_History -> Unit
                             }
                         }
                     }
@@ -2122,6 +2166,59 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
 
         /**
+         * 持仓明细查询请求响应
+         */
+        override fun OnRspQryInvestorPositionDetail(
+            pInvestorPositionDetail: CThostFtdcInvestorPositionDetailField?,
+            pRspInfo: CThostFtdcRspInfoField?,
+            nRequestID: Int,
+            bIsLast: Boolean
+        ) {
+            val request = requestMap[nRequestID] ?: return
+            checkRspInfo(pRspInfo, {
+                val reqData = request.data as QueryPositionDetailsData
+                if (pInvestorPositionDetail != null) {
+                    val code = "${pInvestorPositionDetail.exchangeID}.${pInvestorPositionDetail.instrumentID}"
+                    val direction = Converter.directionC2A(pInvestorPositionDetail.direction)
+                    var details = reqData.results.find { it.code == code && it.direction == direction }
+                    if (details == null) {
+                        details = PositionDetails(pInvestorPositionDetail.investorID, code, direction)
+                        reqData.results.add(details)
+                    }
+                    val index = details.details.binarySearch { sign(it.price - pInvestorPositionDetail.openPrice).toInt() }
+                    val detail = if (index >= 0) {
+                        details.details[index]
+                    } else {
+                        val newDetail = PositionDetail(pInvestorPositionDetail.openPrice, updateTime = LocalDateTime.MIN)
+                        details.details.add(-index - 1, newDetail)
+                        newDetail
+                    }
+                    val openDate = LocalDateTime.of(Converter.dateC2A(pInvestorPositionDetail.openDate), LocalTime.MIDNIGHT)
+                    detail.volume += pInvestorPositionDetail.volume
+                    if (detail.updateTime.isBefore(openDate)) {
+                        detail.updateTime = openDate
+                    }
+                    if (pInvestorPositionDetail.openDate == tradingDay) {
+                        detail.todayVolume += pInvestorPositionDetail.volume
+                    }
+                }
+                if (bIsLast) {
+                    if (reqData.code == null || reqData.direction == null) {  // 查询多个
+                        (request.continuation as Continuation<List<PositionDetails>>).resume(reqData.results)
+                        requestMap.remove(nRequestID)
+                    } else {  // 查询单个
+                        val details = reqData.results.find { it.code == reqData.code && it.direction == reqData.direction }
+                        (request.continuation as Continuation<PositionDetails?>).resume(details)
+                        requestMap.remove(nRequestID)
+                    }
+                }
+            }, { errorCode, errorMsg ->
+                request.continuation.resumeWithException(Exception("$errorMsg ($errorCode)"))
+                requestMap.remove(nRequestID)
+            })
+        }
+
+        /**
          * 保证金价格类型查询请求响应
          */
         override fun OnRspQryBrokerTradingParams(
@@ -2133,8 +2230,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             val request = requestMap[nRequestID] ?: return
             checkRspInfo(pRspInfo, {
                 if (pBrokerTradingParams != null) {
-                    futuresMarginPriceType = Translator.marginPriceTypeC2A(pBrokerTradingParams.marginPriceType)
-                    optionsMarginPriceType = Translator.marginPriceTypeC2A(pBrokerTradingParams.optionRoyaltyPriceType)
+                    futuresMarginPriceType = Converter.marginPriceTypeC2A(pBrokerTradingParams.marginPriceType)
+                    optionsMarginPriceType = Converter.marginPriceTypeC2A(pBrokerTradingParams.optionRoyaltyPriceType)
                 }
                 if (bIsLast) {
                     (request.continuation as Continuation<Unit>).resume(Unit)
@@ -2163,7 +2260,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (code != null) {
                         val instrument = instruments[code]
                         if (instrument != null && instrument.marginRate == null) {
-                            instrument.marginRate = Translator.futuresMarginRateC2A(pMarginRate, code)
+                            instrument.marginRate = Converter.futuresMarginRateC2A(pMarginRate, code)
                         }
                     }
                 }
@@ -2191,7 +2288,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (pCommissionRate != null) {
                     // code 可能为具体合约代码（"SHFE.ru2109"），也可能为品种代码（"ru"）。注意 pCommissionRate.exchangeID 为空
                     val code = mdApi.codeMap[pCommissionRate.instrumentID] ?: pCommissionRate.instrumentID
-                    val commissionRate = Translator.futuresCommissionRateC2A(pCommissionRate, code)
+                    val commissionRate = Converter.futuresCommissionRateC2A(pCommissionRate, code)
                     val instrument = instruments[code]
                     var standardCode = ""
                     // 如果是品种代码，更新 instruments 中所有该品种的手续费
@@ -2279,7 +2376,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             checkRspInfo(pRspInfo, {
                 if (pCommissionRate != null) {
                     // pCommissionRate.exchangeID 为空，pCommissionRate.instrumentID 为期货品种代码 (productId)
-                    val commissionRate = Translator.optionsCommissionRateC2A(pCommissionRate)
+                    val commissionRate = Converter.optionsCommissionRateC2A(pCommissionRate)
                     val instrumentList = instruments.values.filter {
                         if (it.type != SecurityType.OPTIONS) return@filter false
                         if (it.commissionRate != null) return@filter false
@@ -2313,7 +2410,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     val code = mdApi.codeMap[pOptionMargin.instrumentID] ?: pOptionMargin.instrumentID
                     val instrument = instruments[code]
                     if (instrument != null && instrument.marginRate == null) {
-                        instrument.marginRate = Translator.optionsMarginC2A(pOptionMargin, code)
+                        instrument.marginRate = Converter.optionsMarginC2A(pOptionMargin, code)
                     }
                 }
                 if (bIsLast) {
