@@ -183,10 +183,6 @@ var Order.cancelFeeCalculated: Boolean
         extras!!["cancelFeeCalculated"] = value.toString()
     }
 
-fun Order.deepCopy(): Order {
-    return copy(extras = extras?.toMutableMap())
-}
-
 /**
  * 按挂单价从低到高的顺序插入 [order]
  */
@@ -195,14 +191,6 @@ internal fun MutableList<Order>.insert(order: Order) {
     i = if (i == -1) size else i
     add(i, order)
 }
-
-/**
- * 记录单一合约的双向持仓
- */
-internal data class BiPosition(
-    var long: Position? = null,
-    var short: Position? = null,
-)
 
 /**
  * 交易所 ID

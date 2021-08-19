@@ -243,7 +243,7 @@ internal object Converter {
         )
     }
 
-    fun positionC2A(positionField: CThostFtdcInvestorPositionField): Position {
+    fun positionC2A(tradingDay: LocalDate, positionField: CThostFtdcInvestorPositionField): Position {
         val direction = directionC2A(positionField.posiDirection)
         val frozenVolume =  when (direction) {
             Direction.LONG -> positionField.shortFrozen
@@ -252,6 +252,7 @@ internal object Converter {
         }
         return Position(
             accountId = positionField.investorID,
+            tradingDay = tradingDay,
             code = "${positionField.exchangeID}.${positionField.instrumentID}",
             direction = direction,
             preVolume = positionField.ydPosition,
@@ -270,9 +271,10 @@ internal object Converter {
         )
     }
 
-    fun assetsC2A(assetsField: CThostFtdcTradingAccountField): Assets {
+    fun assetsC2A(tradingDay: LocalDate, assetsField: CThostFtdcTradingAccountField): Assets {
         return Assets(
             accountId = assetsField.accountID,
+            tradingDay = tradingDay,
             total = assetsField.balance,
             available = assetsField.available,
             positionValue = assetsField.currMargin,
