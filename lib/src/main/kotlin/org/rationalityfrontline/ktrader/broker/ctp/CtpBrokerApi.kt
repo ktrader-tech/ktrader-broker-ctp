@@ -3,7 +3,7 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
 import org.rationalityfrontline.kevent.KEvent
-import org.rationalityfrontline.ktrader.broker.api.BrokerApi
+import org.rationalityfrontline.ktrader.broker.api.*
 import org.rationalityfrontline.ktrader.datatype.*
 import java.time.LocalDate
 
@@ -25,14 +25,32 @@ class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerA
         tdApi.mdApi = mdApi
     }
 
+    /**
+     * 向 [kEvent] 发送一条 [BrokerEvent]
+     */
+    private fun postBrokerEvent(type: BrokerEventType, data: Any) {
+        kEvent.post(type, BrokerEvent(type, sourceId, data))
+    }
+
+    /**
+     * 向 [kEvent] 发送一条 [BrokerEvent].[LogEvent]
+     */
+    private fun postBrokerLogEvent(level: LogLevel, msg: String) {
+        postBrokerEvent(BrokerEventType.LOG, LogEvent(level, msg))
+    }
+
     override suspend fun connect(extras: Map<String, String>?) {
+        postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】开始连接")
         if (!mdConnected) mdApi.connect()
         if (!tdConnected) tdApi.connect()
+        postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】连接成功")
     }
 
     override fun close() {
+        postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.close】开始关闭")
         tdApi.close()
         mdApi.close()
+        postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.close】关闭成功")
     }
 
     override fun getTradingDay(): LocalDate {

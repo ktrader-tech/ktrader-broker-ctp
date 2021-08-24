@@ -260,7 +260,7 @@ internal object Converter {
             value = positionField.useMargin,
             todayVolume = positionField.todayPosition,
             frozenVolume = frozenVolume,
-            closeableVolume = positionField.position - frozenVolume,
+            frozenTodayVolume = 0,
             todayOpenVolume = positionField.openVolume,
             todayCloseVolume = positionField.closeVolume,
             todayCommission = positionField.commission,

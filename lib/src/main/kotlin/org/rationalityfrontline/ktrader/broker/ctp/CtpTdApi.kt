@@ -1548,14 +1548,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     codeProductMap.clear()
                     cachedTickMap.clear()
                     mdApi.codeMap.clear()
-                    assets.apply {
-                        total = 0.0
-                        available = 0.0
-                        positionValue = 0.0
-                        frozenByOrder = 0.0
-                        todayCommission = 0.0
-                    }
                     positions.clear()
+                    cacheFile.writeText("$tradingDay\n${orderRef.get()}")
                     postBrokerEvent(BrokerEventType.NEW_TRADING_DAY, Converter.dateC2A(tradingDay))
                 }
                 if (bIsLast) {
@@ -1725,13 +1719,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             when (newOrderStatus) {
                                 OrderStatus.ACCEPTED -> {
                                     position.frozenVolume += order.volume
-                                    position.closeableVolume -= order.volume
                                 }
                                 OrderStatus.CANCELED,
                                 OrderStatus.ERROR -> {
                                     val restVolume = order.volume - pOrder.volumeTraded
                                     position.frozenVolume -= restVolume
-                                    position.closeableVolume += restVolume
                                 }
                                 else -> Unit
                             }
@@ -1790,7 +1782,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (biPosition.short == null) {
                         biPosition.short = Position(
                             config.investorId, tradingDate,
-                            trade.code, Direction.SHORT, 0, 0, 0, 0, 0, 0,
+                            trade.code, Direction.SHORT, 0, 0, 0,  0, 0, 0,
                             0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                         )
                     }
@@ -1803,7 +1795,6 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (trade.offset == OrderOffset.OPEN) {
                     position.todayVolume += trade.volume
                     position.volume += trade.volume
-                    position.closeableVolume += trade.volume
                     position.todayOpenVolume += trade.volume
                     position.openCost += trade.turnover
                 } else { // 如果不是开仓，则判断是平今还是平昨，上期所按 order 指令，其它三所涉及平今手续费减免时优先平今，否则优先平昨
@@ -2130,10 +2121,14 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (mergePosition == null) {
                         posList.add(Converter.positionC2A(tradingDate, pInvestorPosition))
                     } else {
+                        val frozenVolume =  when (direction) {
+                            Direction.LONG -> pInvestorPosition.shortFrozen
+                            Direction.SHORT -> pInvestorPosition.longFrozen
+                            else -> 0
+                        }
                         mergePosition.apply {
                             volume += pInvestorPosition.position
                             this.frozenVolume += frozenVolume
-                            closeableVolume = volume - this.frozenVolume
                             todayCloseVolume += pInvestorPosition.closeVolume
                             todayCommission += pInvestorPosition.commission
                             openCost += pInvestorPosition.openCost
@@ -2210,7 +2205,12 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     val detail = if (index >= 0) {
                         details.details[index]
                     } else {
-                        val newDetail = PositionDetail(pInvestorPositionDetail.openPrice, updateTime = LocalDateTime.MIN)
+                        val newDetail = PositionDetail(
+                            accountId = pInvestorPositionDetail.investorID,
+                            code = code,
+                            direction = direction,
+                            price = pInvestorPositionDetail.openPrice,
+                        )
                         details.details.add(-index - 1, newDetail)
                         newDetail
                     }
