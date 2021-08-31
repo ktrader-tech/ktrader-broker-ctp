@@ -210,7 +210,7 @@ internal object Converter {
         return Order(
             orderField.investorID,
             orderId, "${orderField.exchangeID}.${orderField.instrumentID}",
-            orderField.limitPrice, orderField.volumeTotalOriginal, directionC2A(orderField.direction),
+            orderField.limitPrice, null,  orderField.volumeTotalOriginal, orderField.minVolume, directionC2A(orderField.direction),
             offsetC2A(orderField.combOffsetFlag), orderType, orderStatus, orderField.statusMsg,
             orderField.volumeTraded, orderField.limitPrice * orderField.volumeTraded * volumeMultiple, orderField.limitPrice, 0.0, 0.0,
             createTime, updateTime, extras = mutableMapOf()

@@ -116,9 +116,10 @@ class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerA
         direction: Direction,
         offset: OrderOffset,
         orderType: OrderType,
+        minVolume: Int,
         extras: Map<String, String>?
     ): Order {
-        return tdApi.insertOrder(code, price, volume, direction, offset, orderType, extras)
+        return tdApi.insertOrder(code, price, volume, direction, offset, orderType, minVolume, extras)
     }
 
     override suspend fun cancelOrder(orderId: String, extras: Map<String, String>?) {

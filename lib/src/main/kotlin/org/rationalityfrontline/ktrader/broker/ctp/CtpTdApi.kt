@@ -298,6 +298,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         direction: Direction,
         offset: OrderOffset,
         orderType: OrderType,
+        minVolume: Int = 0,
         extras: Map<String, String>? = null
     ): Order {
         val (exchangeId, instrumentId) = parseCode(code)
@@ -334,10 +335,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     OrderType.FAK -> {
                         orderPriceType = THOST_FTDC_OPT_LimitPrice
                         timeCondition = THOST_FTDC_TC_IOC
-                        val rawMinVolume = extras?.get("minVolume")?.toIntOrNull()
-                        if (rawMinVolume != null) {
+                        if (minVolume != 0) {
                             volumeCondition = THOST_FTDC_VC_MV
-                            minVolume = rawMinVolume
+                            this.minVolume = minVolume
                         }
                     }
                     OrderType.FOK -> {
@@ -364,7 +364,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         val order = Order(
             config.investorId,
             "${frontId}_${sessionId}_${orderRef}",
-            code, price, volume, direction, offset, orderType,
+            code, price, null, volume, minVolume, direction, offset, orderType,
             OrderStatus.SUBMITTING, "报单已提交",
             0, 0.0, 0.0, 0.0, 0.0,
             now, now,

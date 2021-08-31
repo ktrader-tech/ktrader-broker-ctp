@@ -1,6 +1,6 @@
 plugins {
-    kotlin("jvm") version "1.5.21"
-    kotlin("kapt") version "1.5.21"
+    kotlin("jvm") version "1.5.30"
+    kotlin("kapt") version "1.5.30"
     `java-library`
     `maven-publish`
     signing
@@ -11,11 +11,11 @@ plugins {
 group = "org.rationalityfrontline.ktrader"
 version = "1.2.0"
 val NAME = "ktrader-broker-ctp"
-val DESC = "CTP implementation of KTrader-Broker-API"
+val DESC = "KTrader-Broker-API 的 CTP 实现"
 val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
-
+val publishMaven = true  // 是否发布到 Maven 仓库
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
-val pluginId = "broker-ctp-rf"
+val pluginId = "CTP"
 val pluginVersion = version as String
 val pluginRequires = "1.2.0"
 val pluginDescription = DESC
@@ -23,12 +23,11 @@ val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"
 
 repositories {
-    mavenLocal()
     mavenCentral()
+    mavenLocal()
 }
 
 dependencies {
-    val publishMaven = true  // 是否发布到 Maven 仓库
     val depPf4j = "org.rationalityfrontline.workaround:pf4j:3.7.0"
     val depKtraderBrokerApi = "org.rationalityfrontline.ktrader:ktrader-broker-api:$pluginRequires"
     val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.0"
@@ -79,6 +78,9 @@ tasks {
     }
     jar {
         manifest.attributes(mapOf(
+            "Implementation-Title" to NAME,
+            "Implementation-Version" to project.version,
+            "Implementation-Vendor" to "RationalityFrontline",
             "Plugin-Class" to pluginClass,
             "Plugin-Id" to pluginId,
             "Plugin-Version" to pluginVersion,
