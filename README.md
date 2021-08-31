@@ -175,7 +175,7 @@ JCTP jar 下载地址：[Maven Repository](https://repo1.maven.org/maven2/org/ra
 
 ## License
 
-Ktrader-Broker-CTP is released under the [Apache 2.0 license](https://github.com/ktrader-tech/ktrader-broker-ctp/blob/master/LICENSE).
+KTrader-Broker-CTP is released under the [Apache 2.0 license](https://github.com/ktrader-tech/ktrader-broker-ctp/blob/master/LICENSE).
 
 ```
 Copyright 2021 RationalityFrontline
