@@ -5,7 +5,7 @@
 
 [KTrader-Broker-API](https://github.com/ktrader-tech/ktrader-broker-api) 的 CTP 实现。可以作为类库使用，也可以作为插件使用。
 
-对底层 CTP 的调用使用了 CTP 的 Java 封装 [JCTP](https://github.com/RationalityFrontline/jctp) ，支持 64 位的 Windows 及 Linux 操作系统。
+对底层 CTP 的调用使用了 CTP 的 Java 封装 [JCTP](https://github.com/ktrader-tech/jctp) ，支持 64 位的 Windows 及 Linux 操作系统。
 默认使用的 JCTP 版本为 `6.6.1_P1-1.0.0`，如果需要更换为其它版本，请参考 [Download](#download) 部分。
 > 虽然该项目是为 [KTrader 量化交易系统](https://github.com/ktrader-tech/ktrader) 而开发的，但也可以脱离 KTrader 独立使用
 

@@ -7,16 +7,11 @@ import org.rationalityfrontline.ktrader.broker.api.Broker
 import org.rationalityfrontline.ktrader.broker.api.BrokerEvent
 import org.rationalityfrontline.ktrader.broker.api.BrokerEventType
 import org.rationalityfrontline.ktrader.datatype.Tick
-import java.net.URLConnection
 import java.nio.file.Path
 
 fun main() {
     println("------------ 启动 ------------")
     val deleteOnFinish = false  // 是否运行完后删除插件，可以用来测试是否存在内存泄露
-    if (deleteOnFinish) {
-        // 避免插件在解压之后 jar 文件无法删除，详见 https://github.com/scijava/native-lib-loader/issues/36
-        URLConnection.setDefaultUseCaches("jar", false)
-    }
     val pluginManager = DefaultPluginManager(Path.of("./plugins/"))
     pluginManager.addPluginStateListener { event ->
         println("插件状态变更：${event.plugin.pluginId} (${event.plugin.pluginPath}), ${event.oldState} -> ${event.pluginState}")
@@ -26,26 +21,24 @@ fun main() {
     println("启用插件...")
     pluginManager.startPlugins()
     println("调用插件...")
-    pluginManager.getExtensions(Broker::class.java, "broker-ctp-rf").forEach { broker ->
+    pluginManager.getExtensions(Broker::class.java).forEach { broker ->
+        if (broker.name != "CTP") return@forEach
         // 创建 CTP 配置参数
         val config = mutableMapOf(
-            "mdFronts" to listOf(  // 行情前置地址
-                "tcp://0.0.0.0:0",
-            ),
-            "tdFronts" to listOf(  // 交易前置地址
-                "tcp://0.0.0.0:0",
-            ),
+            "mdFronts" to listOf("tcp://0.0.0.0:0").toString(),  // 行情前置地址
+            "tdFronts" to listOf("tcp://0.0.0.0:0").toString(),  // 交易前置地址
             "investorId" to "123456",  // 资金账号
             "password" to "123456",  // 资金账号密码
             "brokerId" to "1234",  // BROKER ID
             "appId" to "rf_ktrader_1.0.0",  // APPID
             "authCode" to "ASDFGHJKL",  // 授权码
             "cachePath" to "./data/ctp",  // 本地缓存文件存储目录
-            "disableAutoSubscribe" to false,  // 是否禁用自动订阅
-            "disableFeeCalculation" to false,  // 是否禁用费用计算
+            "disableAutoSubscribe" to "false",  // 是否禁用自动订阅
+            "disableFeeCalculation" to "false",  // 是否禁用费用计算
         )
         // 创建 CtpBrokerApi 实例
         val api = broker.createApi(config, KEVENT)
+        println(api.version)
         // 订阅所有事件
         KEVENT.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList(), tag = api.sourceId) { event -> runBlocking {
             // 处理事件推送

@@ -5,7 +5,7 @@ plugins {
     `maven-publish`
     signing
     id("org.jetbrains.dokka") version "1.5.0"
-    id("org.javamodularity.moduleplugin") version "1.8.7"
+    id("org.javamodularity.moduleplugin") version "1.8.8"
 }
 
 group = "org.rationalityfrontline.ktrader"
@@ -30,7 +30,7 @@ repositories {
 dependencies {
     val depPf4j = "org.rationalityfrontline.workaround:pf4j:3.7.0"
     val depKtraderBrokerApi = "org.rationalityfrontline.ktrader:ktrader-broker-api:$pluginRequires"
-    val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.0"
+    val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.1"
     if (publishMaven) {  // 发布到 Maven 仓库
         api(depKtraderBrokerApi)
         compileOnly(depPf4j)
