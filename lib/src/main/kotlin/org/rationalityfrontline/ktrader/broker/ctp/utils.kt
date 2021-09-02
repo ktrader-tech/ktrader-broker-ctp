@@ -11,7 +11,7 @@ import kotlin.coroutines.Continuation
 /**
  * 请求超时时间，单位：毫秒
  */
-const val TIMEOUT_MILLS: Long = 5000
+internal const val TIMEOUT_MILLS: Long = 6000
 
 /**
  * 验证 code 是否规范，并解析返回其交易所代码和合约代码（[Pair.first] 为 exchangeId，[Pair.second] 为 instrumentId）
@@ -100,7 +100,7 @@ internal suspend fun <T> runWithRetry(action: suspend () -> T, onError: (Excepti
 /**
  * [withTimeout] 与 [suspendCancellableCoroutine] 的结合简写
  */
-suspend inline fun <T> suspendCoroutineWithTimeout(timeMills: Long, crossinline block: (CancellableContinuation<T>) -> Unit): T {
+internal suspend inline fun <T> suspendCoroutineWithTimeout(timeMills: Long, crossinline block: (CancellableContinuation<T>) -> Unit): T {
     return withTimeout(timeMills) {
         suspendCancellableCoroutine(block)
     }

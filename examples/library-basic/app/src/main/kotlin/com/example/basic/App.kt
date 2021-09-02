@@ -33,6 +33,7 @@ fun main() {
     )
     // 创建 CtpBrokerApi 实例
     val api = CtpBrokerApi(config, KEVENT)
+    println(api.version)
     // 订阅所有事件
     KEVENT.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList()) { event -> runBlocking {
         // 处理事件推送

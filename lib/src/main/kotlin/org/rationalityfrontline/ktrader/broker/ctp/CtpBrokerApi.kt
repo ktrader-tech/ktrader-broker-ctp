@@ -7,6 +7,9 @@ import org.rationalityfrontline.ktrader.broker.api.*
 import org.rationalityfrontline.ktrader.datatype.*
 import java.time.LocalDate
 
+/**
+ * [BrokerApi] 的 CTP 实现
+ */
 class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerApi {
     
     private val mdApi: CtpMdApi

@@ -65,7 +65,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     val lastTicks = mutableMapOf<String, Tick>()
 
     init {
-        val cachePath = config.cachePath.ifBlank { ".data/ctp/" }
+        val cachePath = config.cachePath.ifBlank { "./data/ctp/" }
         val mdCachePath = "${if (cachePath.endsWith('/')) cachePath else "$cachePath/"}${config.investorId.ifBlank { "unknown" }}/md/"
         File(mdCachePath).mkdirs()
         mdApi = CThostFtdcMdApi.CreateFtdcMdApi(mdCachePath)

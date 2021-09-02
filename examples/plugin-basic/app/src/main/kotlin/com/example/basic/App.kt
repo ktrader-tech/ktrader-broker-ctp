@@ -3,9 +3,9 @@ package com.example.basic
 import kotlinx.coroutines.runBlocking
 import org.pf4j.DefaultPluginManager
 import org.rationalityfrontline.kevent.KEVENT
-import org.rationalityfrontline.ktrader.broker.api.Broker
 import org.rationalityfrontline.ktrader.broker.api.BrokerEvent
 import org.rationalityfrontline.ktrader.broker.api.BrokerEventType
+import org.rationalityfrontline.ktrader.broker.api.BrokerExtension
 import org.rationalityfrontline.ktrader.datatype.Tick
 import java.nio.file.Path
 
@@ -21,8 +21,8 @@ fun main() {
     println("启用插件...")
     pluginManager.startPlugins()
     println("调用插件...")
-    pluginManager.getExtensions(Broker::class.java).forEach { broker ->
-        if (broker.name != "CTP") return@forEach
+    pluginManager.getExtensions(BrokerExtension::class.java).forEach { brokerExtension ->
+        if (brokerExtension.name != "CTP") return@forEach
         // 创建 CTP 配置参数
         val config = mutableMapOf(
             "mdFronts" to listOf("tcp://0.0.0.0:0").toString(),  // 行情前置地址
@@ -37,7 +37,7 @@ fun main() {
             "disableFeeCalculation" to "false",  // 是否禁用费用计算
         )
         // 创建 CtpBrokerApi 实例
-        val api = broker.createApi(config, KEVENT)
+        val api = brokerExtension.createApi(config, KEVENT)
         println(api.version)
         // 订阅所有事件
         KEVENT.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList(), tag = api.sourceId) { event -> runBlocking {
