@@ -17,7 +17,7 @@ val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = "CTP"
 val pluginVersion = version as String
-val pluginRequires = "1.2.0"
+val pluginRequires = "0.1.0"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"
@@ -30,24 +30,19 @@ repositories {
 dependencies {
     val publishMaven = true  // 是否发布到 Maven 仓库
     val depPf4j = "org.rationalityfrontline.workaround:pf4j:3.7.0"
-    val depKTraderBrokerApi = "org.rationalityfrontline.ktrader:ktrader-broker-api:$pluginRequires"
+    val depKTraderApi = "org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires"
     val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.1"
     if (publishMaven) {  // 发布到 Maven 仓库
-        api(depKTraderBrokerApi)
+        api(depKTraderApi)
         compileOnly(depPf4j)
         implementation(depJCTP)
     } else {  // 发布为 ZIP 插件
         compileOnly(kotlin("stdlib"))
-        compileOnly(depKTraderBrokerApi)
+        compileOnly(depKTraderApi)
         compileOnly(depPf4j)
         kapt(depPf4j)
         implementation(depJCTP) { exclude(group = "org.slf4j", module = "slf4j-api") }
     }
-}
-
-kotlin {
-    // See https://youtrack.jetbrains.com/issue/KT-45545
-    kotlinDaemonJvmArgs = listOf("--illegal-access=permit")
 }
 
 sourceSets.main {

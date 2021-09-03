@@ -5,7 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import org.rationalityfrontline.jctp.CThostFtdcRspInfoField
-import org.rationalityfrontline.ktrader.datatype.*
+import org.rationalityfrontline.ktrader.api.datatype.*
 import kotlin.coroutines.Continuation
 
 /**

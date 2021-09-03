@@ -1,21 +1,39 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
 import org.rationalityfrontline.jctp.CThostFtdcTraderApi
+import org.rationalityfrontline.ktrader.api.ApiInfo
 
 /**
- * 记录了 CtpBroker 的相关信息（初始化参数、额外参数等）
+ * CtpBroker 的描述信息
  */
-object CtpBrokerInfo {
+object CtpBrokerInfo: ApiInfo {
 
-    /**
-     * 交易接口名称
-     */
-    const val name: String = "CTP"
+    override val name: String = "CTP"
 
-    /**
-     * 交易接口版本
-     */
-    val version: String = CThostFtdcTraderApi.GetApiVersion()
+    override val version: String = CThostFtdcTraderApi.GetApiVersion()
+
+    override val author: String = "RationalityFrontline"
+
+    override val description: String = """
+        KTrader-API 中 Broker 接口的 CTP 实现。
+        详情参见 https://github.com/ktrader-tech/ktrader-broker-ctp
+        
+        功能特性：
+        * 利用 Kotlin 协程 将 CTP 的异步接口封装为同步调用方式，降低心智负担，提升开发效率
+        * 内置自成交风控，存在自成交风险的下单请求会本地拒单
+        * 内置撤单数量风控，单合约日内撤单数达到 499 次后会本地拒绝该合约的后续撤单请求
+        * 内置 CTP 流控处理，调用层无需关注任何 CTP 流控信息
+        * 内置维护本地持仓、订单、成交、Tick 缓存，让查询请求快速返回，不受流控阻塞
+        * 支持期货及期权的交易（目前尚不支持期权行权及自对冲，仅支持期权交易）
+        * 自动查询账户真实的手续费率（包括中金所申报手续费）与保证金率，并计算持仓、订单、成交相关的手续费、保证金、冻结资金（期权也支持）
+        * 封装提供了一些 CTP 原生不支持的功能，如查询当前已订阅行情，Tick 中带有合约交易状态及 Tick 内成交量成交额等
+        * 网络断开重连时会自动订阅原先已订阅的行情，不用手动重新订阅
+        * 支持 7x24 小时不间断运行
+        
+        支持的额外参数：
+        subscribeMarketData/unsubscribeMarketData/subscribeAllMarketData/unsubscribeAllMarketData：[isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
+        querySecurity：[queryFee: Boolean = false]【是否查询保证金率及手续费率，如果之前没查过，可能会耗时。当 useCache 为 false 时无效】
+    """.trimIndent()
 
     /**
      * 实例化 CtpBrokerApi 时所需的参数说明。Pair.first 为参数名，Pair.second 为参数说明。 例：Pair("password", "String 投资者资金账号的密码")
@@ -32,13 +50,5 @@ object CtpBrokerInfo {
         Pair("cachePath", "String 存贮订阅信息文件等临时文件的目录"),
         Pair("disableAutoSubscribe", "Boolean 是否禁止自动订阅持仓合约的行情（用于计算合约今仓保证金以及查询持仓时返回最新价及盈亏）"),
         Pair("disableFeeCalculation", "Boolean 是否禁止计算保证金及手续费（首次计算某个合约的费用时，可能会查询该合约的最新 Tick、保证金率、手续费率，造成额外开销，后续再次计算时则会使用上次查询的结果）"),
-    )
-
-    /**
-     * CtpBrokerApi 成员方法的额外参数（extras: Map<String, Any>?）说明。Pair.first 为方法名，Pair.second 为额外参数说明。
-     */
-    val methodExtras: List<Pair<String, String>> = listOf(
-        Pair("subscribeMarketData/unsubscribeMarketData/subscribeAllMarketData/unsubscribeAllMarketData", "[isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】"),
-        Pair("querySecurity", "[queryFee: Boolean = false]【是否查询保证金率及手续费率，如果之前没查过，可能会耗时。当 useCache 为 false 时无效】"),
     )
 }

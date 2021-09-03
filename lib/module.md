@@ -1,3 +1,3 @@
 # Module KTrader-Broker-CTP
 
-[KTrader-Broker-API](https://github.com/ktrader-tech/ktrader-broker-api) 的 CTP 实现
+[KTrader-API](https://github.com/ktrader-tech/ktrader-api) 中 Broker 接口的 CTP 实现

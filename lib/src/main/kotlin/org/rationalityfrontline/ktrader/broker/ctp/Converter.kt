@@ -1,7 +1,7 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
 import org.rationalityfrontline.jctp.*
-import org.rationalityfrontline.ktrader.datatype.*
+import org.rationalityfrontline.ktrader.api.datatype.*
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -276,6 +276,7 @@ internal object Converter {
             accountId = assetsField.accountID,
             tradingDay = tradingDay,
             total = assetsField.balance,
+            yesterdayTotal = assetsField.preBalance,
             available = assetsField.available,
             positionValue = assetsField.currMargin,
             frozenByOrder = assetsField.frozenCash,
@@ -284,6 +285,7 @@ internal object Converter {
             totalClosePnl = 0.0,
             totalCommission = 0.0,
             positionPnl = 0.0,
+            highestTotal = 0.0,
         )
     }
 

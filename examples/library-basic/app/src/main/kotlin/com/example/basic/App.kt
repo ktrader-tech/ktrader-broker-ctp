@@ -2,25 +2,21 @@ package com.example.basic
 
 import kotlinx.coroutines.runBlocking
 import org.rationalityfrontline.kevent.KEVENT
-import org.rationalityfrontline.ktrader.broker.api.BrokerEvent
-import org.rationalityfrontline.ktrader.broker.api.BrokerEventType
+import org.rationalityfrontline.ktrader.api.broker.BrokerEvent
+import org.rationalityfrontline.ktrader.api.broker.BrokerEventType
+import org.rationalityfrontline.ktrader.api.datatype.Direction
+import org.rationalityfrontline.ktrader.api.datatype.OrderOffset
+import org.rationalityfrontline.ktrader.api.datatype.OrderType
+import org.rationalityfrontline.ktrader.api.datatype.Tick
 import org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerApi
 import org.rationalityfrontline.ktrader.broker.ctp.CtpConfig
-import org.rationalityfrontline.ktrader.datatype.Direction
-import org.rationalityfrontline.ktrader.datatype.OrderOffset
-import org.rationalityfrontline.ktrader.datatype.OrderType
-import org.rationalityfrontline.ktrader.datatype.Tick
 
 fun main() {
     println("------------ 启动 ------------")
     // 创建 CTP 配置参数
     val config = CtpConfig(
-        mdFronts = listOf(  // 行情前置地址
-            "tcp://0.0.0.0:0",
-        ),
-        tdFronts = listOf(  // 交易前置地址
-            "tcp://0.0.0.0:0",
-        ),
+        mdFronts = listOf("tcp://0.0.0.0:0"),  // 行情前置地址
+        tdFronts = listOf("tcp://0.0.0.0:0"),  // 交易前置地址
         investorId = "123456",  // 资金账号
         password = "123456",  // 资金账号密码
         brokerId = "1234",  // BROKER ID
@@ -66,9 +62,6 @@ fun main() {
         println(api.queryOrders(onlyUnfinished = false).joinToString("\n"))
         println("查询当日全部成交记录：")
         println(api.queryTrades().joinToString("\n"))
-        // 订阅行情
-        api.subscribeTick("SHFE.ru2201")
-//        Thread.currentThread().join()  // 如果需要 7x24 小时不间断运行，取消注释此行。（如需主动退出运行请使用 System.exit(0) 或 exitProcess(0)）
         api.close()
         println("CTP 已关闭")
     }

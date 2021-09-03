@@ -3,14 +3,15 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
 import org.rationalityfrontline.kevent.KEvent
-import org.rationalityfrontline.ktrader.broker.api.*
-import org.rationalityfrontline.ktrader.datatype.*
+import org.rationalityfrontline.ktrader.api.ApiInfo
+import org.rationalityfrontline.ktrader.api.broker.*
+import org.rationalityfrontline.ktrader.api.datatype.*
 import java.time.LocalDate
 
 /**
  * [BrokerApi] 的 CTP 实现
  */
-class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerApi {
+class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerApi, ApiInfo by CtpBrokerInfo {
     
     private val mdApi: CtpMdApi
     private val tdApi: CtpTdApi

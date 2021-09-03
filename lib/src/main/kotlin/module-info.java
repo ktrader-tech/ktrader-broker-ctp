@@ -3,8 +3,7 @@ module ktrader.broker.ctp {
     requires transitive kotlin.stdlib;
     requires transitive kotlinx.coroutines.core.jvm;
     requires transitive kevent;
-    requires transitive ktrader.datatype;
-    requires transitive ktrader.broker.api;
+    requires transitive ktrader.api;
     requires jctp;
     requires static org.pf4j;
 
