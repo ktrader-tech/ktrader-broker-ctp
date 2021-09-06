@@ -63,6 +63,10 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 缓存的 [Tick] 表，key 为 code，value 为 [Tick]。每当网络断开（OnFrontDisconnected）时会清空以防止出现过期缓存被查询使用的情况。当某个合约退订时，该合约的缓存 Tick 也会清空。
      */
     val lastTicks = mutableMapOf<String, Tick>()
+    /**
+     * 是否正处于测试 TickToTrade 状态
+     */
+    var isTestingTickToTrade: Boolean = false
 
     init {
         val cachePath = config.cachePath.ifBlank { "./data/ctp/" }
@@ -380,10 +384,15 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
          * 行情推送回调。行情会以 [BrokerEventType.TICK] 信息发送
          */
         override fun OnRtnDepthMarketData(data: CThostFtdcDepthMarketDataField) {
+            val receiveTime: Long? = if (isTestingTickToTrade) System.nanoTime() else null
             val code = getCode(data.instrumentID)
             val lastTick = lastTicks[code]
             val newTick = Converter.tickC2A(code, data, lastTick, tdApi.instruments[code]?.volumeMultiple, tdApi.getInstrumentStatus(code)) { e ->
                 postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
+            }
+            if (isTestingTickToTrade) {
+                if (newTick.extras == null) newTick.extras = mutableMapOf()
+                newTick.extras!!.put("tttTime", receiveTime.toString())
             }
             lastTicks[code] = newTick
             // 过滤掉订阅时自动推送的第一笔数据

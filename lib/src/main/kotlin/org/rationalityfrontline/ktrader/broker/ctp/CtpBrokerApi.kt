@@ -16,8 +16,6 @@ class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerA
     private val mdApi: CtpMdApi
     private val tdApi: CtpTdApi
 
-    override val name: String = CtpBrokerInfo.name
-    override val version: String = CtpBrokerInfo.version
     override val account: String = this.config.investorId
     override val mdConnected: Boolean get() = mdApi.connected
     override val tdConnected: Boolean get() = tdApi.connected
@@ -28,6 +26,9 @@ class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerA
         mdApi.tdApi = tdApi
         tdApi.mdApi = mdApi
     }
+
+    override val isTestingTickToTrade: Boolean
+        get() = mdApi.isTestingTickToTrade && tdApi.isTestingTickToTrade
 
     /**
      * 向 [kEvent] 发送一条 [BrokerEvent]
@@ -68,6 +69,11 @@ class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerA
         } else {
             Converter.dateC2A(tradingDay)
         }
+    }
+
+    override fun setTestTickToTrade(value: Boolean) {
+        mdApi.isTestingTickToTrade = value
+        tdApi.isTestingTickToTrade = value
     }
 
     override suspend fun subscribeTicks(codes: Collection<String>, extras: Map<String, String>?) {
@@ -172,6 +178,16 @@ class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerA
 
     override suspend fun prepareFeeCalculation(codes: Collection<String>?, extras: Map<String, String>?) {
         tdApi.prepareFeeCalculation(codes, extras)
+    }
+
+    override fun calculateValue(
+        code: String,
+        direction: Direction,
+        volume: Int,
+        price: Double?,
+        extras: Map<String, String>?
+    ): Double {
+        return tdApi.calculateValue(code, direction, volume, price, extras)
     }
 
     override fun calculatePosition(position: Position, extras: Map<String, String>?) {

@@ -151,6 +151,10 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 合约撤单次数统计，用于检测频繁撤单，key 为 code，value 为撤单次数
      */
     private val cancelStatistics: MutableMap<String, Int> = mutableMapOf()
+    /**
+     * 是否正处于测试 TickToTrade 状态
+     */
+    var isTestingTickToTrade: Boolean = false
 
     init {
         val cachePath = config.cachePath.ifBlank { "./data/ctp/" }
@@ -309,6 +313,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             direction == Direction.SHORT && price <= maxLongPrice -> "本地拒单：存在自成交风险（当前做空价格为 $price，最高做多价格为 ${maxLongPrice}）"
             else -> null
         }
+        // 用于测试 TickToTrade 的订单插入时间
+        var insertTime: Long? = null
         // 无自成交风险，执行下单操作
         if (errorInfo == null) {
             val reqField = CThostFtdcInputOrderField().apply {
@@ -356,7 +362,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
             }
             if (errorInfo == null) {
-                runWithResultCheck({ tdApi.ReqOrderInsert(reqField, nextRequestId()) }, {})
+                runWithResultCheck({ tdApi.ReqOrderInsert(reqField, nextRequestId()) }, {
+                    if (isTestingTickToTrade) insertTime = System.nanoTime()
+                })
             }
         }
         // 构建返回的 order 对象
@@ -371,6 +379,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             extras = mutableMapOf<String, String>().apply {
                 if (extras != null) {
                     putAll(extras)
+                }
+                if (isTestingTickToTrade) {
+                    put("tttTime", insertTime.toString())
                 }
             }
         )
@@ -1120,6 +1131,33 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
             }
             else -> return fallback
+        }
+    }
+
+    /**
+     * 计算证券价值（保证金/市值）
+     * @param code 证券代码
+     * @param direction 持仓方向
+     * @param volume 持仓量
+     * @param price 证券价格，传入 null 则使用最新价计算
+     * @return 证券价值。如果无法计算，则返回负数（-1.0）
+     */
+    fun calculateValue(
+        code: String,
+        direction: Direction,
+        volume: Int,
+        price: Double?,
+        extras: Map<String, String>?
+    ): Double {
+        val finalPrice: Double = if (price == null) {
+            val (tick, _) = getOrQueryTick(code)
+            tick?.lastPrice ?: return -1.0
+        } else price
+        val instrument = instruments[code] ?: return -1.0
+        return when (instrument.type) {
+            SecurityType.FUTURES -> calculateFuturesMargin(instrument, direction, 0, volume, finalPrice, 0.0)
+            SecurityType.OPTIONS -> calculateOptionsMargin(instrument, direction, volume, finalPrice, 0.0, true)
+            else -> -1.0
         }
     }
 

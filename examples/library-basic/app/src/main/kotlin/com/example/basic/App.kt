@@ -1,13 +1,11 @@
 package com.example.basic
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.rationalityfrontline.kevent.KEVENT
 import org.rationalityfrontline.ktrader.api.broker.BrokerEvent
 import org.rationalityfrontline.ktrader.api.broker.BrokerEventType
-import org.rationalityfrontline.ktrader.api.datatype.Direction
-import org.rationalityfrontline.ktrader.api.datatype.OrderOffset
-import org.rationalityfrontline.ktrader.api.datatype.OrderType
-import org.rationalityfrontline.ktrader.api.datatype.Tick
+import org.rationalityfrontline.ktrader.api.datatype.*
 import org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerApi
 import org.rationalityfrontline.ktrader.broker.ctp.CtpConfig
 
@@ -30,6 +28,9 @@ fun main() {
     // 创建 CtpBrokerApi 实例
     val api = CtpBrokerApi(config, KEVENT)
     println(api.version)
+    // 设置 TickToTrade 测试
+    api.setTestTickToTrade(true)
+    var tttTestCount = 0
     // 订阅所有事件
     KEVENT.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList()) { event -> runBlocking {
         // 处理事件推送
@@ -38,10 +39,17 @@ fun main() {
             // Tick 推送
             BrokerEventType.TICK -> {
                 val tick = brokerEvent.data as Tick
-                // 当某合约触及涨停价时，以跌停价挂1手多单开仓限价委托单
-                if (tick.lastPrice == tick.todayHighLimitPrice) {
-                    api.insertOrder(tick.code, tick.todayLowLimitPrice, 1, Direction.LONG, OrderOffset.OPEN, OrderType.LIMIT)
+                if (tttTestCount <= 10) {
+                    // 下无效单测试 TickToTrade
+                    api.insertOrder(tick.code, 0.0, 1, Direction.LONG, OrderOffset.OPEN, OrderType.LIMIT, extras = mapOf("tickTime" to (tick.extras?.get("tttTime") ?: "0")))
+                    tttTestCount++
                 }
+            }
+            BrokerEventType.ORDER_STATUS -> {
+                val order = brokerEvent.data as Order
+                val extras = order.extras!!
+                val tickToTrade = extras["tttTime"]!!.toLong() - extras["tickTime"]!!.toLong()
+                println("TickToTrade: $tickToTrade ns")
             }
             // 其它事件（网络连接、订单回报、成交回报等）
             else -> {
@@ -62,6 +70,8 @@ fun main() {
         println(api.queryOrders(onlyUnfinished = false).joinToString("\n"))
         println("查询当日全部成交记录：")
         println(api.queryTrades().joinToString("\n"))
+        api.subscribeTick("DCE.m2201")
+        delay(10000)
         api.close()
         println("CTP 已关闭")
     }
