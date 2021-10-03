@@ -1,12 +1,13 @@
 # KTrader-Broker-CTP
-[![Maven Central](https://img.shields.io/maven-central/v/org.rationalityfrontline.ktrader/ktrader-broker-ctp.svg?label=Maven%20Central)](https://search.maven.org/search?q=g:%22org.rationalityfrontline.ktrader%22%20AND%20a:%22ktrader-broker-ctp%22)
+[![Maven Central](https://img.shields.io/maven-central/v/org.rationalityfrontline.ktrader/ktrader-broker-ctp.svg?label=maven%20central)](https://search.maven.org/search?q=g:%22org.rationalityfrontline.ktrader%22%20AND%20a:%22ktrader-broker-ctp%22)
+![JDK](https://img.shields.io/badge/jdk-%3E%3D11-orange)
 ![platform](https://img.shields.io/badge/platform-windows%7Clinux-green)
 [![Apache License 2.0](https://img.shields.io/github/license/ktrader-tech/ktrader-broker-ctp)](https://github.com/ktrader-tech/ktrader-broker-ctp/blob/master/LICENSE)
 
 [KTrader-API](https://github.com/ktrader-tech/ktrader-api) 中 Broker 接口的 CTP 实现。可以作为类库使用，也可以作为插件使用。
 
 对底层 CTP 的调用使用了 CTP 的 Java 封装 [JCTP](https://github.com/ktrader-tech/jctp) ，支持 64 位的 Windows 及 Linux 操作系统。
-默认使用的 JCTP 版本为 `6.6.1_P1-1.0.1`，如果需要更换为其它版本，请参考 [Download](#download) 部分。
+默认使用的 JCTP 版本为 `6.6.1_P1-1.0.3`，如果需要更换为其它版本，请参考 [Download](#download) 部分。
 > 虽然该项目是为 [KTrader 量化交易系统](https://github.com/ktrader-tech/ktrader) 而开发的，但也可以脱离 KTrader 独立使用
 
 ## 功能特性
@@ -130,7 +131,7 @@ repositories {
 dependencies {
     implementation("org.rationalityfrontline.ktrader:ktrader-broker-ctp:1.2.0")
     // 如果需要使用其它版本的 JCTP，取消注释下面一行，并填入自己需要的版本号
-//    implementation("org.rationalityfrontline:jctp") { version { strictly("6.6.1_P1_CP-1.0.1") } }
+//    implementation("org.rationalityfrontline:jctp") { version { strictly("6.6.1_P1_CP-1.0.3") } }
 }
 ```
 

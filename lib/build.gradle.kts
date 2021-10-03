@@ -1,6 +1,8 @@
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 plugins {
-    kotlin("jvm") version "1.5.30"
-    kotlin("kapt") version "1.5.30"
+    kotlin("jvm") version "1.5.31"
+    kotlin("kapt") version "1.5.31"
     `java-library`
     `maven-publish`
     signing
@@ -17,7 +19,7 @@ val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = "CTP"
 val pluginVersion = version as String
-val pluginRequires = "0.1.0"
+val pluginRequires = "0.1.1"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"
@@ -31,7 +33,7 @@ dependencies {
     val publishMaven = true  // 是否发布到 Maven 仓库
     val depPf4j = "org.rationalityfrontline.workaround:pf4j:3.7.0"
     val depKTraderApi = "org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires"
-    val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.1"
+    val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.3"
     if (publishMaven) {  // 发布到 Maven 仓库
         api(depKTraderApi)
         compileOnly(depPf4j)
@@ -50,6 +52,12 @@ sourceSets.main {
 }
 
 tasks {
+    withType(JavaCompile::class.java) {
+        options.release.set(11)
+    }
+    withType(KotlinCompile::class.java) {
+        kotlinOptions.jvmTarget = "11"
+    }
     dokkaHtml {
         outputDirectory.set(buildDir.resolve("javadoc"))
         moduleName.set("KTrader-Broker-CTP")
