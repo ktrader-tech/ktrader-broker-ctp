@@ -46,7 +46,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 协程 scope
      */
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     /**
      * 上次更新的交易日。当 [connected] 处于 false 状态时可能因过期而失效
      */
@@ -55,7 +55,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             field = value
             tradingDate = Converter.dateC2A(value)
         }
-    var tradingDate = LocalDate.now()
+    var tradingDate: LocalDate = LocalDate.now()
         private set
     /**
      * 用于记录维护交易日及 orderRef 的缓存文件
