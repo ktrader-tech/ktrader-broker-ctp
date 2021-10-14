@@ -25,6 +25,7 @@ private fun testCtpApi(brokerExtension: BrokerExtension) {
         "appId" to "rf_ktrader_1.0.0",  // APPID
         "authCode" to "ASDFGHJKL",  // 授权码
         "cachePath" to "./data/ctp",  // 本地缓存文件存储目录
+        "timeout" to "6000",  // 接口调用超时时间（单位：毫秒）
         "disableAutoSubscribe" to "false",  // 是否禁用自动订阅
         "disableFeeCalculation" to "false",  // 是否禁用费用计算
     )

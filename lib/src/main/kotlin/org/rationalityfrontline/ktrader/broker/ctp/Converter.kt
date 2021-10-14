@@ -72,7 +72,7 @@ internal object Converter {
         }
     }
 
-    fun tickC2A(code: String, tickField: CThostFtdcDepthMarketDataField, lastTick: Tick? = null, volumeMultiple: Int? = null, marketStatus: MarketStatus = MarketStatus.UNKNOWN, onTimeParseError: (Exception) -> Unit): Tick {
+    fun tickC2A(tradingDay: LocalDate, code: String, tickField: CThostFtdcDepthMarketDataField, lastTick: Tick? = null, volumeMultiple: Int? = null, marketStatus: MarketStatus = MarketStatus.UNKNOWN, onTimeParseError: (Exception) -> Unit): Tick {
         val updateTime = try {
             LocalTime.parse("${tickField.updateTime}.${tickField.updateMillisec}").atDate(LocalDate.now())
         } catch (e: Exception) {
@@ -85,6 +85,7 @@ internal object Converter {
         return Tick(
             code = code,
             time = updateTime,
+            tradingDay = tradingDay,
             lastPrice = lastPrice,
             bidPrice = bidPrice,
             askPrice = askPrice,
@@ -167,7 +168,7 @@ internal object Converter {
         }
     }
 
-    fun orderC2A(orderField: CThostFtdcOrderField, volumeMultiple: Int, onTimeParseError: (Exception) -> Unit): Order {
+    fun orderC2A(tradingDay: LocalDate, orderField: CThostFtdcOrderField, volumeMultiple: Int, onTimeParseError: (Exception) -> Unit): Order {
         val orderId = "${orderField.frontID}_${orderField.sessionID}_${orderField.orderRef}"
         val orderType = when (orderField.orderPriceType) {
             jctpConstants.THOST_FTDC_OPT_LimitPrice -> when (orderField.timeCondition) {
@@ -208,8 +209,7 @@ internal object Converter {
             }
         } else createTime
         return Order(
-            orderField.investorID,
-            orderId, "${orderField.exchangeID}.${orderField.instrumentID}",
+            orderField.investorID, orderId, tradingDay, "${orderField.exchangeID}.${orderField.instrumentID}",
             orderField.limitPrice, null,  orderField.volumeTotalOriginal, orderField.minVolume, directionC2A(orderField.direction),
             offsetC2A(orderField.combOffsetFlag), orderType, orderStatus, orderField.statusMsg,
             orderField.volumeTraded, orderField.limitPrice * orderField.volumeTraded * volumeMultiple, orderField.limitPrice, 0.0, 0.0,
@@ -219,7 +219,7 @@ internal object Converter {
         }
     }
 
-    fun tradeC2A(tradeField: CThostFtdcTradeField, orderId: String, onTimeParseError: (Exception) -> Unit): Trade {
+    fun tradeC2A(tradingDay: LocalDate, tradeField: CThostFtdcTradeField, orderId: String, onTimeParseError: (Exception) -> Unit): Trade {
         val tradeTime = try {
             val date = tradeField.tradeDate
             val updateTimeStr = "${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${tradeField.tradeTime}"
@@ -232,6 +232,7 @@ internal object Converter {
             accountId = tradeField.investorID,
             tradeId = "${tradeField.tradeID}_${tradeField.orderRef}",
             orderId = orderId,
+            tradingDay = tradingDay,
             code = "${tradeField.exchangeID}.${tradeField.instrumentID}",
             price = tradeField.price,
             volume = tradeField.volume,
@@ -276,16 +277,11 @@ internal object Converter {
             accountId = assetsField.accountID,
             tradingDay = tradingDay,
             total = assetsField.balance,
-            yesterdayTotal = assetsField.preBalance,
             available = assetsField.available,
             positionValue = assetsField.currMargin,
             frozenByOrder = assetsField.frozenCash,
             todayCommission = assetsField.commission,
-            initialCash = 0.0,
-            totalClosePnl = 0.0,
-            totalCommission = 0.0,
-            positionPnl = 0.0,
-            highestTotal = 0.0,
+            yesterdayTotal = assetsField.preBalance,
         )
     }
 

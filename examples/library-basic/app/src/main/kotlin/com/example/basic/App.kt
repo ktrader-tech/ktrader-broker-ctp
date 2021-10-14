@@ -22,6 +22,7 @@ fun main() {
         authCode = "ASDFGHJKL",  // 授权码
         userProductInfo = "",  // 产品信息
         cachePath = "./data/ctp",  // 本地缓存文件存储目录
+        timeout = 6000,  // 接口调用超时时间（单位：毫秒）
         disableAutoSubscribe = false,  // 是否禁用自动订阅
         disableFeeCalculation = false,  // 是否禁用费用计算
     )

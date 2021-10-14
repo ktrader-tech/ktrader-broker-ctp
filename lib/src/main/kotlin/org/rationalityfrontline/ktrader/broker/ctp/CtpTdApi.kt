@@ -55,7 +55,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             field = value
             tradingDate = Converter.dateC2A(value)
         }
-    private var tradingDate = LocalDate.now()
+    var tradingDate = LocalDate.now()
+        private set
     /**
      * 用于记录维护交易日及 orderRef 的缓存文件
      */
@@ -114,7 +115,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 本地缓存的资产信息，并不维护
      */
-    private val assets: Assets = Assets(config.investorId, LocalDate.now(), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    private val assets: Assets = Assets(config.investorId)
     /**
      * 上次查询账户资产的时间
      */
@@ -370,8 +371,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         // 构建返回的 order 对象
         val now = LocalDateTime.now()
         val order = Order(
-            config.investorId,
-            "${frontId}_${sessionId}_${orderRef}",
+            config.investorId, "${frontId}_${sessionId}_${orderRef}", tradingDate,
             code, price, null, volume, minVolume, direction, offset, orderType,
             OrderStatus.SUBMITTING, "报单已提交",
             0, 0.0, 0.0, 0.0, 0.0,
@@ -452,7 +452,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
         val requestId = nextRequestId()
         return runWithResultCheck({ tdApi.ReqQryDepthMarketData(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation, data = code)
             }
         })
@@ -478,7 +478,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
         val requestId = nextRequestId()
         return runWithResultCheck({ tdApi.ReqQryInstrument(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation, data = code)
             }
         })
@@ -492,7 +492,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         val qryField = CThostFtdcQryInstrumentField()
         val requestId = nextRequestId()
         return runWithResultCheck({ tdApi.ReqQryInstrument(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(TIMEOUT_MILLS * 2) { continuation ->
+            suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<SecurityInfo>())
             }
         })
@@ -518,7 +518,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
         val requestId = nextRequestId()
         return runWithResultCheck<Order?>({ tdApi.ReqQryOrder(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryOrdersData(orderId))
             }
         })?.apply { calculateOrder(this) }
@@ -555,7 +555,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             return runWithResultCheck<List<Order>>({ tdApi.ReqQryOrder(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS * 2) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryOrdersData(null, code, onlyUnfinished))
                 }
             }).onEach { calculateOrder(it) }
@@ -577,7 +577,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
         val requestId = nextRequestId()
         return runWithResultCheck<Trade?>({ tdApi.ReqQryTrade(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryTradesData(tradeId))
             }
         })?.apply { calculateTrade(this) }
@@ -614,7 +614,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             return runWithResultCheck<List<Trade>>({ tdApi.ReqQryTrade(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS * 2) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation, data = reqData)
                 }
             }).onEach { calculateTrade(it) }
@@ -636,7 +636,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
         val requestId = nextRequestId()
         return runWithResultCheck<Assets>({ tdApi.ReqQryTradingAccount(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation)
             }
         }).apply {
@@ -680,7 +680,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             runWithResultCheck({ tdApi.ReqQryInvestorPosition(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation, tag = direction.name, data = mutableListOf<Position>())
                 }
             })
@@ -713,7 +713,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             return runWithResultCheck({ tdApi.ReqQryInvestorPosition(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS * 2) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation, tag = code ?: "", data = mutableListOf<Position>())
                 }
             })
@@ -731,7 +731,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
         val requestId = nextRequestId()
         return runWithResultCheck({ tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code, direction))
             }
         })
@@ -747,7 +747,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
         val requestId = nextRequestId()
         return runWithResultCheck({ tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code))
             }
         })
@@ -764,7 +764,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
         val requestId = nextRequestId()
         return runWithResultCheck({ tdApi.ReqQryBrokerTradingParams(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation)
             }
         })
@@ -783,7 +783,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentMarginRate(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation)
                 }
             })
@@ -798,7 +798,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 val requestId = nextRequestId()
                 runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentMarginRate(qryField, requestId) }, {
-                    suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                    suspendCoroutineWithTimeout(config.timeout) { continuation ->
                         requestMap[requestId] = RequestContinuation(requestId, continuation)
                     }
                 })
@@ -819,7 +819,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrTradeCost(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation)
                 }
             })
@@ -834,7 +834,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 val requestId = nextRequestId()
                 runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrTradeCost(qryField, requestId) }, {
-                    suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                    suspendCoroutineWithTimeout(config.timeout) { continuation ->
                         requestMap[requestId] = RequestContinuation(requestId, continuation)
                     }
                 })
@@ -854,7 +854,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             runWithResultCheck<List<Job>>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<Job>())
                 }
             }).forEach { it.join() }
@@ -870,7 +870,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 val requestId = nextRequestId()
                 runWithResultCheck<List<Job>>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
-                    suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                    suspendCoroutineWithTimeout(config.timeout) { continuation ->
                         requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<Job>())
                     }
                 }).forEach { it.join() }
@@ -890,7 +890,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
         val requestId = nextRequestId()
         runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentOrderCommRate(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation)
             }
         })
@@ -908,7 +908,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrCommRate(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation)
                 }
             })
@@ -924,7 +924,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 val requestId = nextRequestId()
                 runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrCommRate(qryField, requestId) }, {
-                    suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                    suspendCoroutineWithTimeout(config.timeout) { continuation ->
                         requestMap[requestId] = RequestContinuation(requestId, continuation)
                     }
                 })
@@ -1294,7 +1294,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             runWithResultCheck<Unit>({ tdApi.ReqAuthenticate(reqField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation)
                 }
             })
@@ -1312,7 +1312,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             runWithResultCheck<Unit>({ tdApi.ReqUserLogin(reqField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation)
                 }
             })
@@ -1328,7 +1328,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             runWithResultCheck<Unit>({ tdApi.ReqSettlementInfoConfirm(reqField, requestId) }, {
-                suspendCoroutineWithTimeout(TIMEOUT_MILLS) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation)
                 }
             })
@@ -1679,7 +1679,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 // 如果是第一次接收回报，则创建并缓存该订单，之后局部变量 order 不为 null
                 if (order == null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
-                    order = Converter.orderC2A(pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
+                    order = Converter.orderC2A(tradingDate, pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     calculateOrder(order)
@@ -1744,29 +1744,30 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     todayCommission += order.commission - oldCommission
                 }
             }
-            if (newOrderStatus == OrderStatus.ERROR) {
-                order.updateTime = LocalDateTime.now()
-                postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
-            } else {
-                // 仅发送与成交不相关的订单状态更新回报，成交相关的订单状态更新回报会在 OnRtnTrade 中发出，以确保成交回报先于状态回报
-                if (newOrderStatus != oldStatus && newOrderStatus != OrderStatus.PARTIALLY_FILLED && newOrderStatus != OrderStatus.FILLED) {
-                    // 如果是平仓，更新仓位冻结及剩余可平信息
-                    if (order.offset != OrderOffset.OPEN) {
-                        val position = queryCachedPosition(order.code, order.direction, true)
-                        if (position != null) {
-                            when (newOrderStatus) {
-                                OrderStatus.ACCEPTED -> {
-                                    position.frozenVolume += order.volume
-                                }
-                                OrderStatus.CANCELED,
-                                OrderStatus.ERROR -> {
+            // 仅发送与成交不相关的订单状态更新回报，成交相关的订单状态更新回报会在 OnRtnTrade 中发出，以确保成交回报先于状态回报
+            if (newOrderStatus != OrderStatus.PARTIALLY_FILLED && newOrderStatus != OrderStatus.FILLED) {
+                // 如果是平仓，更新仓位冻结及剩余可平信息
+                if (order.offset != OrderOffset.OPEN) {
+                    val position = queryCachedPosition(order.code, order.direction, true)
+                    if (position != null) {
+                        when (newOrderStatus) {
+                            OrderStatus.ACCEPTED -> {
+                                position.frozenVolume += order.volume
+                            }
+                            OrderStatus.CANCELED,
+                            OrderStatus.ERROR -> {
+                                if (oldStatus != OrderStatus.ERROR && oldStatus != OrderStatus.CANCELED) {
                                     val restVolume = order.volume - pOrder.volumeTraded
                                     position.frozenVolume -= restVolume
                                 }
-                                else -> Unit
                             }
+                            else -> Unit
                         }
                     }
+                }
+                if (newOrderStatus == OrderStatus.ERROR) {
+                    order.updateTime = LocalDateTime.now()
+                } else {
                     val updateTime = try {
                         if (newOrderStatus == OrderStatus.CANCELED) {
                             LocalTime.parse(pOrder.cancelTime).atDate(LocalDate.now())
@@ -1779,6 +1780,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         LocalDateTime.now()
                     }
                     order.updateTime = updateTime
+                }
+                if (oldStatus != newOrderStatus || newOrderStatus == OrderStatus.ERROR) {
                     postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
                 }
             }
@@ -1796,7 +1799,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知订单的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                 }
             }
-            val trade = Converter.tradeC2A(pTrade, order?.orderId ?: orderSysId) { e ->
+            val trade = Converter.tradeC2A(tradingDate, pTrade, order?.orderId ?: orderSysId) { e ->
                 postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
             }
             val instrument = instruments[trade.code] ?: return
@@ -1951,7 +1954,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val reqData = request.data as QueryOrdersData
                 if (pOrder != null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
-                    val order = Converter.orderC2A(pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
+                    val order = Converter.orderC2A(Converter.dateC2A(pOrder.tradingDay), pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryOrder】Order time 解析失败：${"${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     reqData.results.add(order)
@@ -2000,7 +2003,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRspQryTrade】未找到对应订单：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                         }
                     }
-                    val trade = Converter.tradeC2A(pTrade, order?.orderId ?: orderSysId) { e ->
+                    val trade = Converter.tradeC2A(Converter.dateC2A(pTrade.tradingDay), pTrade, order?.orderId ?: orderSysId) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
                     }
                     reqData.results.add(trade)
@@ -2046,7 +2049,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 val code = "${pDepthMarketData.exchangeID}.${pDepthMarketData.instrumentID}"
                 if (code == reqCode) {
-                    val tick = Converter.tickC2A(code, pDepthMarketData, volumeMultiple = instruments[code]?.volumeMultiple, marketStatus = getInstrumentStatus(code)) { e ->
+                    val tick = Converter.tickC2A(Converter.dateC2A(pDepthMarketData.tradingDay), code, pDepthMarketData, volumeMultiple = instruments[code]?.volumeMultiple, marketStatus = getInstrumentStatus(code)) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryDepthMarketData】Tick updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
                     }
                     cachedTickMap[code] = tick

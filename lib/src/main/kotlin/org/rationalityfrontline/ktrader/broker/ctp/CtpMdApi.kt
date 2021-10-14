@@ -193,7 +193,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }.toTypedArray()
             val requestId = nextRequestId()
             runWithResultCheck({ mdApi.SubscribeMarketData(rawCodes) }, {
-                suspendCoroutineWithTimeout<Unit>(TIMEOUT_MILLS) { continuation ->
+                suspendCoroutineWithTimeout<Unit>(config.timeout) { continuation ->
                     // data 为订阅的 instrumentId 可变集合，在 CtpMdSpi.OnRspSubMarketData 中每收到一条合约订阅成功回报，就将该 instrumentId 从该可变集合中移除。当集合为空时，表明请求完成
                     requestMap[requestId] = RequestContinuation(requestId, continuation, "subscribeMarketData", rawCodes.toMutableSet())
                 }
@@ -211,7 +211,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         val rawCodes = filteredCodes.map { parseCode(it).second }.toTypedArray()
         val requestId = nextRequestId()
         runWithResultCheck({ mdApi.UnSubscribeMarketData(rawCodes) }, {
-            suspendCoroutineWithTimeout<Unit>(TIMEOUT_MILLS) { continuation ->
+            suspendCoroutineWithTimeout<Unit>(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation, "unsubscribeMarketData", rawCodes.toMutableSet())
             }
         })
@@ -387,7 +387,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             val receiveTime: Long? = if (isTestingTickToTrade) System.nanoTime() else null
             val code = getCode(data.instrumentID)
             val lastTick = lastTicks[code]
-            val newTick = Converter.tickC2A(code, data, lastTick, tdApi.instruments[code]?.volumeMultiple, tdApi.getInstrumentStatus(code)) { e ->
+            val newTick = Converter.tickC2A(tdApi.tradingDate, code, data, lastTick, tdApi.instruments[code]?.volumeMultiple, tdApi.getInstrumentStatus(code)) { e ->
                 postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
             }
             if (isTestingTickToTrade) {

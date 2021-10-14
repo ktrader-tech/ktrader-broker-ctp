@@ -39,6 +39,7 @@ fun main() {
         authCode = "ASDFGHJKL",  // 授权码
         userProductInfo = "",  // 产品信息
         cachePath = "./data/ctp",  // 本地缓存文件存储目录
+        timeout = 6000,  // 接口调用超时时间（单位：毫秒）
         disableAutoSubscribe = false,  // 是否禁用自动订阅
         disableFeeCalculation = false,  // 是否禁用费用计算
     )
@@ -102,11 +103,11 @@ fun main() {
 * authCode: String 交易终端软件的授权码
 * userProductInfo: String 交易终端软件的产品信息
 * cachePath: String 存贮订阅信息文件等临时文件的目录
+* timeout: Long 接口调用超时时间（单位：毫秒），默认为 6000
 * disableAutoSubscribe: Boolean 是否禁止自动订阅持仓合约的行情（用于计算合约今仓保证金以及查询持仓时返回最新价及盈亏）
 * disableFeeCalculation: Boolean 是否禁止计算保证金及手续费（首次计算某个合约的费用时，可能会查询该合约的最新 Tick、保证金率、手续费率，造成额外开销，后续再次计算时则会使用上次查询的结果）
 
 支持的额外参数：
-* subscribeMarketData/unsubscribeMarketData/subscribeAllMarketData/unsubscribeAllMarketData：[isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
 * querySecurity：[queryFee: Boolean = false]【是否查询保证金率及手续费率，如果之前没查过，可能会耗时。当 useCache 为 false 时无效】
 
 关于证券代码，统一格式为“交易所代码.合约代码”。如 "SHFE.ru2109" 表示上期所的橡胶2109合约。全部交易所如下：

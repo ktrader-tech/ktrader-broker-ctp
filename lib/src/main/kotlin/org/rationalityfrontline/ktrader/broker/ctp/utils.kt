@@ -9,11 +9,6 @@ import org.rationalityfrontline.ktrader.api.datatype.*
 import kotlin.coroutines.Continuation
 
 /**
- * 请求超时时间，单位：毫秒
- */
-internal const val TIMEOUT_MILLS: Long = 6000
-
-/**
  * 验证 code 是否规范，并解析返回其交易所代码和合约代码（[Pair.first] 为 exchangeId，[Pair.second] 为 instrumentId）
  */
 fun parseCode(code: String): Pair<String, String> {
