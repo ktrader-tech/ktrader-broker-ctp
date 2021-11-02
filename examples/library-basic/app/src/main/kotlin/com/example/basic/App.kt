@@ -2,7 +2,6 @@ package com.example.basic
 
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
-import org.rationalityfrontline.kevent.KEVENT
 import org.rationalityfrontline.ktrader.api.broker.BrokerEvent
 import org.rationalityfrontline.ktrader.api.broker.BrokerEventType
 import org.rationalityfrontline.ktrader.api.datatype.*
@@ -27,13 +26,13 @@ fun main() {
         disableFeeCalculation = false,  // 是否禁用费用计算
     )
     // 创建 CtpBrokerApi 实例
-    val api = CtpBrokerApi(config, KEVENT)
+    val api = CtpBrokerApi(config)
     println(api.version)
     // 设置 TickToTrade 测试
     api.setTestTickToTrade(true)
     var tttTestCount = 0
     // 订阅所有事件
-    KEVENT.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList()) { event -> runBlocking {
+    api.kEvent.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList()) { event -> runBlocking {
         // 处理事件推送
         val brokerEvent = event.data
         when (brokerEvent.type) {
@@ -76,7 +75,5 @@ fun main() {
         api.close()
         println("CTP 已关闭")
     }
-    // 清空 KEVENT
-    KEVENT.clear()
     println("------------ 退出 ------------")
 }

@@ -11,7 +11,7 @@ import java.time.LocalDate
 /**
  * [BrokerApi] 的 CTP 实现
  */
-class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerApi, ApiInfo by CtpBrokerInfo {
+class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo {
     
     private val mdApi: CtpMdApi
     private val tdApi: CtpTdApi
@@ -19,6 +19,8 @@ class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerA
     override val account: String = this.config.investorId
     override val mdConnected: Boolean get() = mdApi.connected
     override val tdConnected: Boolean get() = tdApi.connected
+
+    override val kEvent: KEvent = KEvent("CTP-$account")
 
     init {
         mdApi = CtpMdApi(this.config, kEvent, sourceId)
@@ -56,6 +58,7 @@ class CtpBrokerApi(val config: CtpConfig, override val kEvent: KEvent) : BrokerA
         tdApi.close()
         mdApi.close()
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.close】关闭成功")
+        kEvent.release()
     }
 
     override fun getTradingDay(): LocalDate {

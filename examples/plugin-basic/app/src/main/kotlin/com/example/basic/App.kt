@@ -4,7 +4,6 @@ import kotlinx.coroutines.runBlocking
 import org.pf4j.DefaultPluginManager
 import org.pf4j.ExtensionFactory
 import org.pf4j.SingletonExtensionFactory
-import org.rationalityfrontline.kevent.KEVENT
 import org.rationalityfrontline.ktrader.api.broker.BrokerEvent
 import org.rationalityfrontline.ktrader.api.broker.BrokerEventType
 import org.rationalityfrontline.ktrader.api.broker.BrokerExtension
@@ -30,9 +29,9 @@ private fun testCtpApi(brokerExtension: BrokerExtension) {
         "disableFeeCalculation" to "false",  // 是否禁用费用计算
     )
     // 创建 CtpBrokerApi 实例
-    val api = brokerExtension.createApi(config, KEVENT)
+    val api = brokerExtension.createApi(config)
     // 订阅所有事件
-    KEVENT.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList(), tag = api.sourceId) { event -> runBlocking {
+    api.kEvent.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList(), tag = api.sourceId) { event -> runBlocking {
         // 处理事件推送
         val brokerEvent = event.data
         when (brokerEvent.type) {
@@ -57,8 +56,6 @@ private fun testCtpApi(brokerExtension: BrokerExtension) {
         api.close()
         println("CTP 已关闭")
     }
-    // 退订事件
-    KEVENT.removeSubscribersByTag(api.sourceId)
 }
 
 fun main() {
