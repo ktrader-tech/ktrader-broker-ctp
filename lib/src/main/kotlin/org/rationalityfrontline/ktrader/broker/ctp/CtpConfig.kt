@@ -36,18 +36,18 @@ data class CtpConfig(
          */
         fun fromMap(config: Map<String, String>): CtpConfig {
             return CtpConfig(
-                mdFronts = config["mdFronts"]?.run { subSequence(1, length - 1).split(", ") } ?: listOf(),
-                tdFronts = config["tdFronts"]?.run { subSequence(1, length - 1).split(", ") } ?: listOf(),
-                investorId = config["investorId"] ?: "",
-                password = config["password"] ?: "",
-                brokerId = config["brokerId"] ?: "",
-                appId = config["appId"] ?: "",
-                authCode = config["authCode"] ?: "",
-                userProductInfo = config["userProductInfo"] ?: "",
-                cachePath = config["cachePath"] ?: "",
-                timeout = config["timeout"]?.toLongOrNull() ?: 6000,
-                disableAutoSubscribe = config["disableAutoSubscribe"] == "true",
-                disableFeeCalculation = config["disableFeeCalculation"] == "true",
+                mdFronts = config["MdFronts"]?.run { subSequence(1, length - 1).split(", ") } ?: listOf(),
+                tdFronts = config["TdFronts"]?.run { subSequence(1, length - 1).split(", ") } ?: listOf(),
+                investorId = config["InvestorID"] ?: "",
+                password = config["Password"] ?: "",
+                brokerId = config["BrokerID"] ?: "",
+                appId = config["AppID"] ?: "",
+                authCode = config["AuthCode"] ?: "",
+                userProductInfo = config["UserProductInfo"] ?: "",
+                cachePath = config["CachePath"] ?: "",
+                timeout = config["Timeout"]?.toLongOrNull() ?: 6000,
+                disableAutoSubscribe = config["DisableAutoSubscribe"] == "true",
+                disableFeeCalculation = config["DisableFeeCalculation"] == "true",
             )
         }
     }

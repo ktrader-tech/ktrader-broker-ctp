@@ -16,17 +16,18 @@ private fun testCtpApi(brokerExtension: BrokerExtension) {
     println("Broker 信息结束 ----------------------------------")
     // 创建 CTP 配置参数
     val config = mutableMapOf(
-        "mdFronts" to listOf("tcp://0.0.0.0:0").toString(),  // 行情前置地址
-        "tdFronts" to listOf("tcp://0.0.0.0:0").toString(),  // 交易前置地址
-        "investorId" to "123456",  // 资金账号
-        "password" to "123456",  // 资金账号密码
-        "brokerId" to "1234",  // BROKER ID
-        "appId" to "rf_ktrader_1.0.0",  // APPID
-        "authCode" to "ASDFGHJKL",  // 授权码
-        "cachePath" to "./data/ctp",  // 本地缓存文件存储目录
-        "timeout" to "6000",  // 接口调用超时时间（单位：毫秒）
-        "disableAutoSubscribe" to "false",  // 是否禁用自动订阅
-        "disableFeeCalculation" to "false",  // 是否禁用费用计算
+        "MdFronts" to listOf("tcp://0.0.0.0:0").toString(),  // 行情前置地址
+        "TdFronts" to listOf("tcp://0.0.0.0:0").toString(),  // 交易前置地址
+        "InvestorID" to "123456",  // 资金账号
+        "Password" to "123456",  // 资金账号密码
+        "BrokerID" to "1234",  // BROKER ID
+        "AppID" to "rf_ktrader_1.0.0",  // APPID
+        "AuthCode" to "ASDFGHJKL",  // 授权码
+        "UserProductInfo" to "",  //用户产品信息
+        "CachePath" to "./data/ctp",  // 本地缓存文件存储目录
+        "Timeout" to "6000",  // 接口调用超时时间（单位：毫秒）
+        "DisableAutoSubscribe" to "false",  // 是否禁用自动订阅
+        "DisableFeeCalculation" to "false",  // 是否禁用费用计算
     )
     // 创建 CtpBrokerApi 实例
     val api = brokerExtension.createApi(config)
