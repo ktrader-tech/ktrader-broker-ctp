@@ -35,9 +35,19 @@ data class CtpConfig(
          * 将标准的 Map<String, String> 格式的 config 转换为 CtpConfig
          */
         fun fromMap(config: Map<String, String>): CtpConfig {
+            fun parseAsStringList(input: String?): List<String> {
+                return input?.run {
+                    when {
+                        startsWith('[') && endsWith(']') -> subSequence(1, length - 1).split(", ", ",", "， ", "，")
+                        contains(',') || contains('，') -> split(", ", ",", "， ", "，")
+                        isNotEmpty() -> listOf(this)
+                        else -> listOf()
+                    }
+                } ?: listOf()
+            }
             return CtpConfig(
-                mdFronts = config["MdFronts"]?.run { subSequence(1, length - 1).split(", ") } ?: listOf(),
-                tdFronts = config["TdFronts"]?.run { subSequence(1, length - 1).split(", ") } ?: listOf(),
+                mdFronts = parseAsStringList(config["MdFronts"]),
+                tdFronts = parseAsStringList(config["TdFronts"]),
                 investorId = config["InvestorID"] ?: "",
                 password = config["Password"] ?: "",
                 brokerId = config["BrokerID"] ?: "",

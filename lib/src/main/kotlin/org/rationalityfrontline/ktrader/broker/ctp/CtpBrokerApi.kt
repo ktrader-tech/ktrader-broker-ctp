@@ -17,9 +17,15 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
     private val tdApi: CtpTdApi
 
     override val account: String = this.config.investorId
+    override val brokerStatus: BrokerStatus get() = status
+    private var status: BrokerStatus = BrokerStatus.CREATED
+        set(value) {
+            if (field == value) return
+            field = value
+            postBrokerEvent(BrokerEventType.BROKER_STATUS, value)
+        }
     override val mdConnected: Boolean get() = mdApi.connected
     override val tdConnected: Boolean get() = tdApi.connected
-    private var status: BrokerStatus = BrokerStatus.CREATED
 
     override val kEvent: KEvent = KEvent("CTP-$account")
 
@@ -50,6 +56,20 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
     override suspend fun connect(extras: Map<String, String>?) {
         if (status != BrokerStatus.CREATED) return
         status = BrokerStatus.CONNECTING
+        kEvent.subscribe<ConnectionEvent>(BrokerEventType.CONNECTION) { connectionEvent ->
+            when (connectionEvent.type) {
+                ConnectionEventType.MD_LOGGED_IN,
+                ConnectionEventType.TD_LOGGED_IN, -> {
+                    if (mdConnected && tdConnected) status = BrokerStatus.CONNECTED
+                }
+                ConnectionEventType.MD_NET_DISCONNECTED,
+                ConnectionEventType.TD_NET_DISCONNECTED,
+                ConnectionEventType.MD_LOGGED_OUT,
+                ConnectionEventType.TD_LOGGED_OUT, -> {
+                    status = BrokerStatus.CONNECTING
+                }
+            }
+        }
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】开始连接")
         if (!mdConnected) mdApi.connect()
         if (!tdConnected) tdApi.connect()
@@ -57,23 +77,12 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
     }
 
     override fun close() {
-        status = BrokerStatus.CLOSED
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.close】开始关闭")
         tdApi.close()
         mdApi.close()
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.close】关闭成功")
         kEvent.release()
-    }
-
-    override fun getBrokerStatus(): BrokerStatus {
-        return when (status) {
-            BrokerStatus.CREATED,
-            BrokerStatus.CLOSED,
-            BrokerStatus.CONNECTED -> status
-            BrokerStatus.CONNECTING -> {
-                if (mdConnected && tdConnected) BrokerStatus.CONNECTED else status
-            }
-        }
+        status = BrokerStatus.CLOSED
     }
 
     override fun getTradingDay(): LocalDate {
