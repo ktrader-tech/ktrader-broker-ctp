@@ -1,13 +1,13 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "1.5.31"
-    kotlin("kapt") version "1.5.31"
+    kotlin("jvm") version "1.6.0"
+    kotlin("kapt") version "1.6.0"
     `java-library`
     `maven-publish`
     signing
-    id("org.jetbrains.dokka") version "1.5.0"
-    id("org.javamodularity.moduleplugin") version "1.8.8"
+    id("org.jetbrains.dokka") version "1.5.30"
+    id("org.javamodularity.moduleplugin") version "1.8.10"
 }
 
 group = "org.rationalityfrontline.ktrader"
