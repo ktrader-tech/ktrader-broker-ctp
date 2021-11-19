@@ -66,7 +66,9 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
                 ConnectionEventType.TD_NET_DISCONNECTED,
                 ConnectionEventType.MD_LOGGED_OUT,
                 ConnectionEventType.TD_LOGGED_OUT, -> {
-                    brokerStatus = BrokerStatus.CONNECTING
+                    if (brokerStatus != BrokerStatus.CLOSING) {
+                        brokerStatus = BrokerStatus.CONNECTING
+                    }
                 }
                 else -> Unit
             }
@@ -77,7 +79,8 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】连接成功")
     }
 
-    override fun close() {
+    override suspend fun close() {
+        brokerStatus = BrokerStatus.CLOSING
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.close】开始关闭")
         tdApi.close()
         mdApi.close()
