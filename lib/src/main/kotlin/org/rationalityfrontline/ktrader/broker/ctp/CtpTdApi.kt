@@ -115,7 +115,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 本地缓存的资产信息，并不维护
      */
-    private val assets: Assets = Assets(config.investorId)
+    private var assets: Assets = Assets(config.investorId)
     /**
      * 上次查询账户资产的时间
      */
@@ -640,6 +640,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 requestMap[requestId] = RequestContinuation(requestId, continuation)
             }
         }).apply {
+            assets = this
+            lastQueryAssetsTime = System.currentTimeMillis()
             positionPnl = 0.0
             positions.values.forEach { bi ->
                 bi.long?.let {
@@ -2133,7 +2135,6 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 (request.continuation as Continuation<Assets>).resume(Converter.assetsC2A(tradingDate, pTradingAccount))
                 requestMap.remove(nRequestID)
-                lastQueryAssetsTime = System.currentTimeMillis()
             }, { errorCode, errorMsg ->
                 request.continuation.resumeWithException(Exception("$errorMsg ($errorCode)"))
                 requestMap.remove(nRequestID)
@@ -2255,10 +2256,10 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         details.details.add(-index - 1, newDetail)
                         newDetail
                     }
-                    val openDate = LocalDateTime.of(Converter.dateC2A(pInvestorPositionDetail.openDate), LocalTime.MIDNIGHT)
+                    val openDate = Converter.dateC2A(pInvestorPositionDetail.openDate)
                     detail.volume += pInvestorPositionDetail.volume
-                    if (detail.updateTime.isBefore(openDate)) {
-                        detail.updateTime = openDate
+                    if (detail.tradingDay.isBefore(openDate)) {
+                        detail.tradingDay = openDate
                     }
                     if (pInvestorPositionDetail.openDate == tradingDay) {
                         detail.todayVolume += pInvestorPositionDetail.volume

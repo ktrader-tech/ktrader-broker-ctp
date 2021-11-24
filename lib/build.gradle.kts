@@ -30,7 +30,7 @@ repositories {
 }
 
 dependencies {
-    val publishMaven = true  // 是否发布到 Maven 仓库
+    val publishMaven = false  // 是否发布到 Maven 仓库
     val depPf4j = "org.rationalityfrontline.workaround:pf4j:3.7.0"
     val depKTraderApi = "org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires"
     val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.3"
