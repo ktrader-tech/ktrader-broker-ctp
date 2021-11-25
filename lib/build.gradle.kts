@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import java.time.LocalDateTime
 
 plugins {
     kotlin("jvm") version "1.6.0"
@@ -15,6 +16,7 @@ version = "1.2.0"
 val NAME = "ktrader-broker-ctp"
 val DESC = "KTrader-Broker-API 的 CTP 实现"
 val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
+val asPlugin = true  // 是否作为插件编译
 
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = "CTP"
@@ -30,20 +32,19 @@ repositories {
 }
 
 dependencies {
-    val publishMaven = false  // 是否发布到 Maven 仓库
     val depPf4j = "org.rationalityfrontline.workaround:pf4j:3.7.0"
     val depKTraderApi = "org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires"
     val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.3"
-    if (publishMaven) {  // 发布到 Maven 仓库
-        api(depKTraderApi)
-        compileOnly(depPf4j)
-        implementation(depJCTP)
-    } else {  // 发布为 ZIP 插件
+    if (asPlugin) {  // 发布为 ZIP 插件
         compileOnly(kotlin("stdlib"))
         compileOnly(depKTraderApi)
         compileOnly(depPf4j)
         kapt(depPf4j)
         implementation(depJCTP) { exclude(group = "org.slf4j", module = "slf4j-api") }
+    } else {  // 发布到 Maven 仓库
+        api(depKTraderApi)
+        compileOnly(depPf4j)
+        implementation(depJCTP)
     }
 }
 
@@ -57,6 +58,23 @@ tasks {
     }
     withType(KotlinCompile::class.java) {
         kotlinOptions.jvmTarget = "11"
+    }
+    compileKotlin {
+        doFirst {  //写入 Build 信息
+            File("lib/src/main/kotlin/org/rationalityfrontline/ktrader/broker/ctp/BuildInfo.kt").writeText(
+                """ 
+                |package org.rationalityfrontline.ktrader.broker.ctp
+                |
+                |object BuildInfo {
+                |    const val NAME = "$NAME"
+                |    const val VERSION = "$version"
+                |    const val BUILD_DATE = "${LocalDateTime.now()}"
+                |    const val VENDOR = "RationalityFrontline"
+                |    const val IS_PLUGIN = $asPlugin
+                |}
+                """.trimMargin()
+            )
+        }
     }
     dokkaHtml {
         outputDirectory.set(buildDir.resolve("javadoc"))

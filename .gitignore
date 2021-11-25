@@ -3,4 +3,5 @@
 build
 plugins
 data
+BuildInfo.kt
 CtpAccounts.kt

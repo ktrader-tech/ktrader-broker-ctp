@@ -210,7 +210,7 @@ internal object Converter {
         } else createTime
         return Order(
             orderField.investorID, orderId, tradingDay, "${orderField.exchangeID}.${orderField.instrumentID}",
-            orderField.limitPrice, null,  orderField.volumeTotalOriginal, orderField.minVolume, directionC2A(orderField.direction),
+            orderField.limitPrice, -1.0,  orderField.volumeTotalOriginal, orderField.minVolume, directionC2A(orderField.direction),
             offsetC2A(orderField.combOffsetFlag), orderType, orderStatus, orderField.statusMsg,
             orderField.volumeTraded, orderField.limitPrice * orderField.volumeTraded * volumeMultiple, orderField.limitPrice, 0.0, 0.0,
             createTime, updateTime, extras = mutableMapOf()

@@ -372,7 +372,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         val now = LocalDateTime.now()
         val order = Order(
             config.investorId, "${frontId}_${sessionId}_${orderRef}", tradingDate,
-            code, price, null, volume, minVolume, direction, offset, orderType,
+            code, price, -1.0, volume, minVolume, direction, offset, orderType,
             OrderStatus.SUBMITTING, "报单已提交",
             0, 0.0, 0.0, 0.0, 0.0,
             now, now,
