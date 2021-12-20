@@ -38,10 +38,10 @@ object CtpBrokerInfo: ApiInfo {
      * 实例化 CtpBrokerApi 时所需的参数说明。Pair.first 为参数名，Pair.second 为参数说明。 例：Pair("password", "String 投资者资金账号的密码")
      */
     val configKeys: List<Pair<String, String>> = mutableListOf(
-        Pair("MdFronts", "List<String> 行情前置"),
-        Pair("TdFronts", "List<String> 交易前置"),
         Pair("InvestorID", "String 投资者资金账号"),
         Pair("Password", "String 投资者资金账号的密码"),
+        Pair("MdFronts", "List<String> 行情前置"),
+        Pair("TdFronts", "List<String> 交易前置"),
         Pair("BrokerID", "String 经纪商ID"),
         Pair("AppID", "String 交易终端软件的标识码"),
         Pair("AuthCode", "String 交易终端软件的授权码"),

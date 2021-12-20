@@ -72,7 +72,10 @@ internal object Converter {
         }
     }
 
-    fun tickC2A(tradingDay: LocalDate, code: String, tickField: CThostFtdcDepthMarketDataField, lastTick: Tick? = null, volumeMultiple: Int? = null, marketStatus: MarketStatus = MarketStatus.UNKNOWN, onTimeParseError: (Exception) -> Unit): Tick {
+    fun tickC2A(
+        tradingDay: LocalDate, code: String, tickField: CThostFtdcDepthMarketDataField, lastTick: Tick? = null,
+        info: SecurityInfo? = null, marketStatus: MarketStatus = MarketStatus.UNKNOWN, onTimeParseError: (Exception) -> Unit
+    ): Tick {
         val updateTime = try {
             LocalTime.parse("${tickField.updateTime}.${tickField.updateMillisec}").atDate(LocalDate.now())
         } catch (e: Exception) {
@@ -82,8 +85,13 @@ internal object Converter {
         val lastPrice = formatDouble(tickField.lastPrice)
         val bidPrice = arrayOf(formatDouble(tickField.bidPrice1), formatDouble(tickField.bidPrice2), formatDouble(tickField.bidPrice3), formatDouble(tickField.bidPrice4), formatDouble(tickField.bidPrice5))
         val askPrice = arrayOf(formatDouble(tickField.askPrice1), formatDouble(tickField.askPrice2), formatDouble(tickField.askPrice3), formatDouble(tickField.askPrice4), formatDouble(tickField.askPrice5))
+        val volumeMultiple = info?.volumeMultiple
         return Tick(
             code = code,
+            name = info?.name ?: code,
+            type = info?.type ?: SecurityType.UNKNOWN,
+            volumeMultiple = volumeMultiple ?: 1,
+            priceTick = info?.priceTick ?: 1.0,
             time = updateTime,
             tradingDay = tradingDay,
             lastPrice = lastPrice,
@@ -244,17 +252,22 @@ internal object Converter {
         )
     }
 
-    fun positionC2A(tradingDay: LocalDate, positionField: CThostFtdcInvestorPositionField): Position {
+    fun positionC2A(tradingDay: LocalDate, positionField: CThostFtdcInvestorPositionField, info: SecurityInfo? = null): Position {
         val direction = directionC2A(positionField.posiDirection)
         val frozenVolume =  when (direction) {
             Direction.LONG -> positionField.shortFrozen
             Direction.SHORT -> positionField.longFrozen
             else -> 0
         }
+        val code = "${positionField.exchangeID}.${positionField.instrumentID}"
         return Position(
             accountId = positionField.investorID,
             tradingDay = tradingDay,
-            code = "${positionField.exchangeID}.${positionField.instrumentID}",
+            code = code,
+            name = info?.name ?: code,
+            type = info?.type ?: SecurityType.UNKNOWN,
+            volumeMultiple = info?.volumeMultiple ?: 1,
+            priceTick = info?.priceTick ?: 1.0,
             direction = direction,
             preVolume = positionField.ydPosition,
             volume = positionField.position,

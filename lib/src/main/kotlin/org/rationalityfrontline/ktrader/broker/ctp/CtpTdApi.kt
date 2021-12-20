@@ -1814,7 +1814,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (biPosition.long == null) {
                         biPosition.long = Position(
                             config.investorId, tradingDate,
-                            trade.code, Direction.LONG, 0, 0, 0, 0, 0, 0,
+                            trade.code, instrument.name, instrument.type, instrument.volumeMultiple, instrument.priceTick,
+                            Direction.LONG, 0, 0, 0, 0, 0, 0,
                             0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                         )
                     }
@@ -1825,7 +1826,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (biPosition.short == null) {
                         biPosition.short = Position(
                             config.investorId, tradingDate,
-                            trade.code, Direction.SHORT, 0, 0, 0,  0, 0, 0,
+                            trade.code, instrument.name, instrument.type, instrument.volumeMultiple, instrument.priceTick,
+                            Direction.SHORT, 0, 0, 0,  0, 0, 0,
                             0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                         )
                     }
@@ -2051,7 +2053,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 val code = "${pDepthMarketData.exchangeID}.${pDepthMarketData.instrumentID}"
                 if (code == reqCode) {
-                    val tick = Converter.tickC2A(Converter.dateC2A(pDepthMarketData.tradingDay), code, pDepthMarketData, volumeMultiple = instruments[code]?.volumeMultiple, marketStatus = getInstrumentStatus(code)) { e ->
+                    val tick = Converter.tickC2A(Converter.dateC2A(pDepthMarketData.tradingDay), code, pDepthMarketData, info = instruments[code], marketStatus = getInstrumentStatus(code)) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryDepthMarketData】Tick updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
                     }
                     cachedTickMap[code] = tick
@@ -2161,7 +2163,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         mergePosition = posList.find { it.code == code && it.direction == direction }
                     }
                     if (mergePosition == null) {
-                        posList.add(Converter.positionC2A(tradingDate, pInvestorPosition))
+                        posList.add(Converter.positionC2A(tradingDate, pInvestorPosition, instruments[code]))
                     } else {
                         val frozenVolume =  when (direction) {
                             Direction.LONG -> pInvestorPosition.shortFrozen
