@@ -176,7 +176,7 @@ internal object Converter {
         }
     }
 
-    fun orderC2A(tradingDay: LocalDate, orderField: CThostFtdcOrderField, volumeMultiple: Int, onTimeParseError: (Exception) -> Unit): Order {
+    fun orderC2A(tradingDay: LocalDate, orderField: CThostFtdcOrderField, info: SecurityInfo?, onTimeParseError: (Exception) -> Unit): Order {
         val orderId = "${orderField.frontID}_${orderField.sessionID}_${orderField.orderRef}"
         val orderType = when (orderField.orderPriceType) {
             jctpConstants.THOST_FTDC_OPT_LimitPrice -> when (orderField.timeCondition) {
@@ -216,18 +216,19 @@ internal object Converter {
                 LocalDateTime.now()
             }
         } else createTime
+        val code = "${orderField.exchangeID}.${orderField.instrumentID}"
         return Order(
-            orderField.investorID, orderId, tradingDay, "${orderField.exchangeID}.${orderField.instrumentID}",
+            orderField.investorID, orderId, tradingDay, code, info?.name ?: code,
             orderField.limitPrice, -1.0,  orderField.volumeTotalOriginal, orderField.minVolume, directionC2A(orderField.direction),
             offsetC2A(orderField.combOffsetFlag), orderType, orderStatus, orderField.statusMsg,
-            orderField.volumeTraded, orderField.limitPrice * orderField.volumeTraded * volumeMultiple, orderField.limitPrice, 0.0, 0.0,
+            orderField.volumeTraded, orderField.limitPrice * orderField.volumeTraded * (info?.volumeMultiple ?: 1), orderField.limitPrice, 0.0, 0.0,
             createTime, updateTime, extras = mutableMapOf()
         ).apply {
             if (orderField.orderSysID.isNotEmpty()) orderSysId = "${orderField.exchangeID}_${orderField.orderSysID}"
         }
     }
 
-    fun tradeC2A(tradingDay: LocalDate, tradeField: CThostFtdcTradeField, orderId: String, onTimeParseError: (Exception) -> Unit): Trade {
+    fun tradeC2A(tradingDay: LocalDate, tradeField: CThostFtdcTradeField, orderId: String, name: String, onTimeParseError: (Exception) -> Unit): Trade {
         val tradeTime = try {
             val date = tradeField.tradeDate
             val updateTimeStr = "${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${tradeField.tradeTime}"
@@ -242,6 +243,7 @@ internal object Converter {
             orderId = orderId,
             tradingDay = tradingDay,
             code = "${tradeField.exchangeID}.${tradeField.instrumentID}",
+            name = name,
             price = tradeField.price,
             volume = tradeField.volume,
             turnover = 0.0,

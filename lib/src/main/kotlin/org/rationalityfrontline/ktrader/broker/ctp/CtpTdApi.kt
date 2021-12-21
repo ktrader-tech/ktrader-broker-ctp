@@ -372,7 +372,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         val now = LocalDateTime.now()
         val order = Order(
             config.investorId, "${frontId}_${sessionId}_${orderRef}", tradingDate,
-            code, price, -1.0, volume, minVolume, direction, offset, orderType,
+            code, instruments[code]?.name ?: code, price, -1.0, volume, minVolume, direction, offset, orderType,
             OrderStatus.SUBMITTING, "报单已提交",
             0, 0.0, 0.0, 0.0, 0.0,
             now, now,
@@ -1681,7 +1681,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 // 如果是第一次接收回报，则创建并缓存该订单，之后局部变量 order 不为 null
                 if (order == null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
-                    order = Converter.orderC2A(tradingDate, pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
+                    order = Converter.orderC2A(tradingDate, pOrder, instruments[code]) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     calculateOrder(order)
@@ -1801,10 +1801,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知订单的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                 }
             }
-            val trade = Converter.tradeC2A(tradingDate, pTrade, order?.orderId ?: orderSysId) { e ->
+            val code = "${pTrade.exchangeID}.${pTrade.instrumentID}"
+            val instrument = instruments[code] ?: return
+            val trade = Converter.tradeC2A(tradingDate, pTrade, order?.orderId ?: orderSysId, instrument.name) { e ->
                 postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
             }
-            val instrument = instruments[trade.code] ?: return
             trade.turnover = trade.volume * trade.price * instrument.volumeMultiple
             // 更新仓位信息，并判断是平今还是平昨
             val biPosition = positions.getOrPut(trade.code) { BiPosition() }
@@ -1958,7 +1959,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val reqData = request.data as QueryOrdersData
                 if (pOrder != null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
-                    val order = Converter.orderC2A(Converter.dateC2A(pOrder.tradingDay), pOrder, instruments[code]?.volumeMultiple ?: 0) { e ->
+                    val order = Converter.orderC2A(Converter.dateC2A(pOrder.tradingDay), pOrder, instruments[code]) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryOrder】Order time 解析失败：${"${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     reqData.results.add(order)
@@ -2007,7 +2008,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRspQryTrade】未找到对应订单：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                         }
                     }
-                    val trade = Converter.tradeC2A(Converter.dateC2A(pTrade.tradingDay), pTrade, order?.orderId ?: orderSysId) { e ->
+                    val code = "${pTrade.exchangeID}.${pTrade.instrumentID}"
+                    val trade = Converter.tradeC2A(Converter.dateC2A(pTrade.tradingDay), pTrade, order?.orderId ?: orderSysId, instruments[code]?.name ?: code) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
                     }
                     reqData.results.add(trade)
