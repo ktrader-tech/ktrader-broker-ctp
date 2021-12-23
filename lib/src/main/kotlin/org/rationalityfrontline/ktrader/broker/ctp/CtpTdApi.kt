@@ -1111,7 +1111,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             Direction.SHORT -> {  // 卖方
                 val marginRate = getOrQueryMarginRate(instrument) ?: return fallback
                 fun calculateMargin(price: Double): Double {
-                    return volume * (price * instrument.volumeMultiple + max(marginRate.longMarginRatioByMoney, marginRate.shortMarginRatioByMoney))
+                    return volume * max((price * instrument.volumeMultiple + marginRate.longMarginRatioByMoney), marginRate.shortMarginRatioByMoney)
                 }
                 if (optionsMarginPriceType == MarginPriceType.OPEN_PRICE && !isOpen) {  // 唯一一种不需查询 Tick 的情况
                     return calculateMargin(avgOpenPrice)

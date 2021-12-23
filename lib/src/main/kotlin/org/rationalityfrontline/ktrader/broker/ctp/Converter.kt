@@ -85,12 +85,15 @@ internal object Converter {
         val lastPrice = formatDouble(tickField.lastPrice)
         val bidPrice = arrayOf(formatDouble(tickField.bidPrice1), formatDouble(tickField.bidPrice2), formatDouble(tickField.bidPrice3), formatDouble(tickField.bidPrice4), formatDouble(tickField.bidPrice5))
         val askPrice = arrayOf(formatDouble(tickField.askPrice1), formatDouble(tickField.askPrice2), formatDouble(tickField.askPrice3), formatDouble(tickField.askPrice4), formatDouble(tickField.askPrice5))
-        val volumeMultiple = info?.volumeMultiple
+        val volumeMultiple = info?.volumeMultiple ?: 1
+        if (code.startsWith("CZCE")) {
+            tickField.turnover *= volumeMultiple
+        }
         return Tick(
             code = code,
             name = info?.name ?: code,
             type = info?.type ?: SecurityType.UNKNOWN,
-            volumeMultiple = volumeMultiple ?: 1,
+            volumeMultiple = volumeMultiple,
             priceTick = info?.priceTick ?: 1.0,
             time = updateTime,
             tradingDay = tradingDay,
@@ -113,7 +116,7 @@ internal object Converter {
             todayLowPrice = formatDouble(tickField.lowestPrice),
             todayHighLimitPrice = formatDouble(tickField.upperLimitPrice),
             todayLowLimitPrice = formatDouble(tickField.lowerLimitPrice),
-            todayAvgPrice = if (volumeMultiple == null || volumeMultiple == 0 || tickField.volume == 0) 0.0 else tickField.turnover / (volumeMultiple * tickField.volume),
+            todayAvgPrice = if (volumeMultiple == 0 || tickField.volume == 0) 0.0 else tickField.turnover / (volumeMultiple * tickField.volume),
             todayVolume = tickField.volume,
             todayTurnover = formatDouble(tickField.turnover),
             todaySettlementPrice = formatDouble(tickField.settlementPrice),
