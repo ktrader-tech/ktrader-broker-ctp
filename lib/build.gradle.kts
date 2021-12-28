@@ -2,26 +2,26 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.time.LocalDateTime
 
 plugins {
-    kotlin("jvm") version "1.6.0"
-    kotlin("kapt") version "1.6.0"
+    kotlin("jvm") version "1.6.10"
+    kotlin("kapt") version "1.6.10"
     `java-library`
     `maven-publish`
     signing
-    id("org.jetbrains.dokka") version "1.5.30"
+    id("org.jetbrains.dokka") version "1.6.0"
     id("org.javamodularity.moduleplugin") version "1.8.10"
 }
 
 group = "org.rationalityfrontline.ktrader"
-version = "1.2.0"
+version = "1.3.0"
 val NAME = "ktrader-broker-ctp"
 val DESC = "KTrader-Broker-API 的 CTP 实现"
 val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
 val asPlugin = true  // 是否作为插件编译
 
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
-val pluginId = "CTP"
+val pluginId = "KT-CTP"
 val pluginVersion = version as String
-val pluginRequires = "0.1.1"
+val pluginRequires = "0.1.2"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"

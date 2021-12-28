@@ -31,7 +31,7 @@ object CtpBrokerInfo: ApiInfo {
         * 支持 7x24 小时不间断运行
         
         支持的额外参数：
-        querySecurity：[queryFee: Boolean = false]【是否查询保证金率及手续费率，如果之前没查过，可能会耗时。当 useCache 为 false 时无效】
+        querySecurity/querySecurities/queryAllSecurities/queryOptions：[ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会比较耗时。当 useCache 为 false 时无效】
     """.trimIndent()
 
     /**
@@ -50,8 +50,6 @@ object CtpBrokerInfo: ApiInfo {
     ).run {
         if (!BuildInfo.IS_PLUGIN) {
             add(Pair("CachePath", "String 存贮订阅信息文件等临时文件的目录。默认为 ./data/ctp/"))
-            add(Pair("DisableAutoSubscribe", "Boolean 是否禁止自动订阅持仓合约的行情（用于计算合约今仓保证金以及查询持仓时返回最新价及盈亏）。默认为 false"))
-            add(Pair("DisableFeeCalculation", "Boolean 是否禁止计算保证金及手续费（首次计算某个合约的费用时，可能会查询该合约的最新 Tick、保证金率、手续费率，造成额外开销，后续再次计算时则会使用上次查询的结果）。默认为 false"))
         }
         toList()
     }

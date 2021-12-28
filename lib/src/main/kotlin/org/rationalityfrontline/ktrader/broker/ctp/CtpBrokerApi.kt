@@ -2,9 +2,12 @@
 
 package org.rationalityfrontline.ktrader.broker.ctp
 
+import org.rationalityfrontline.kevent.EventDispatchMode
 import org.rationalityfrontline.kevent.KEvent
+import org.rationalityfrontline.kevent.SubscriberThreadMode
 import org.rationalityfrontline.ktrader.api.ApiInfo
 import org.rationalityfrontline.ktrader.api.broker.*
+import org.rationalityfrontline.ktrader.api.data.DataApi
 import org.rationalityfrontline.ktrader.api.datatype.*
 import java.time.LocalDate
 
@@ -26,7 +29,11 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
     override val mdConnected: Boolean get() = mdApi.connected
     override val tdConnected: Boolean get() = tdApi.connected
 
-    override val kEvent: KEvent = KEvent("CTP-$account")
+    override val kEvent: KEvent = KEvent(
+        name = "CTP-$account",
+        defaultDispatchMode = EventDispatchMode.SEQUENTIAL,
+        defaultThreadMode = SubscriberThreadMode.BACKGROUND,
+    )
 
     init {
         mdApi = CtpMdApi(this.config, kEvent, sourceId)
@@ -37,6 +44,8 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
 
     override val isTestingTickToTrade: Boolean
         get() = mdApi.isTestingTickToTrade && tdApi.isTestingTickToTrade
+
+    override var dataApi: DataApi? = null
 
     /**
      * 向 [kEvent] 发送一条 [BrokerEvent]
@@ -79,7 +88,7 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】连接成功")
     }
 
-    override suspend fun close() {
+    override suspend fun close(extras: Map<String, String>?) {
         brokerStatus = BrokerStatus.CLOSING
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.close】开始关闭")
         tdApi.close()
@@ -107,24 +116,24 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         tdApi.isTestingTickToTrade = value
     }
 
-    override suspend fun subscribeTicks(codes: Collection<String>, extras: Map<String, String>?) {
-        mdApi.subscribeMarketData(codes, extras)
+    override suspend fun subscribeTicks(codes: Collection<String>, extras: Map<String, String>?): List<SecurityInfo> {
+        return mdApi.subscribeMarketData(codes, extras)
     }
 
     override suspend fun unsubscribeTicks(codes: Collection<String>, extras: Map<String, String>?) {
         mdApi.unsubscribeMarketData(codes, extras)
     }
 
-    override suspend fun subscribeAllTicks(extras: Map<String, String>?) {
-        mdApi.subscribeAllMarketData(extras)
+    override suspend fun subscribeAllTicks(extras: Map<String, String>?): List<SecurityInfo> {
+        return mdApi.subscribeAllMarketData(extras)
     }
 
     override suspend fun unsubscribeAllTicks(extras: Map<String, String>?) {
         mdApi.unsubscribeAllMarketData(extras)
     }
 
-    override suspend fun subscribeTick(code: String, extras: Map<String, String>?) {
-        subscribeTicks(listOf(code), extras)
+    override suspend fun subscribeTick(code: String, extras: Map<String, String>?): SecurityInfo? {
+        return subscribeTicks(listOf(code), extras).firstOrNull()
     }
 
     override suspend fun unsubscribeTick(code: String, extras: Map<String, String>?) {
@@ -143,11 +152,28 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
     }
 
     override suspend fun querySecurity(code: String, useCache: Boolean, extras: Map<String, String>?): SecurityInfo? {
-        return runWithRetry({ tdApi.queryInstrument(code, useCache, extras) })
+        return runWithRetry({ tdApi.querySecurity(code, useCache, extras) })
+    }
+
+    override suspend fun querySecurities(
+        productId: String,
+        useCache: Boolean,
+        extras: Map<String, String>?
+    ): List<SecurityInfo> {
+        return runWithRetry({ tdApi.querySecurities(productId, useCache, extras) })
     }
 
     override suspend fun queryAllSecurities(useCache: Boolean, extras: Map<String, String>?): List<SecurityInfo> {
-        return runWithRetry({ tdApi.queryAllInstruments(useCache, extras) })
+        return runWithRetry({ tdApi.queryAllSecurities(useCache, extras) })
+    }
+
+    override suspend fun queryOptions(
+        underlyingCode: String,
+        type: OptionsType?,
+        useCache: Boolean,
+        extras: Map<String, String>?
+    ): List<SecurityInfo> {
+        return runWithRetry({ tdApi.queryOptions(underlyingCode, type, useCache, extras) })
     }
 
     override suspend fun insertOrder(
@@ -205,31 +231,5 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
 
     override suspend fun queryPositions(code: String?, useCache: Boolean, extras: Map<String, String>?): List<Position> {
         return runWithRetry({ tdApi.queryPositions(code, useCache, extras) })
-    }
-
-    override suspend fun prepareFeeCalculation(codes: Collection<String>?, extras: Map<String, String>?) {
-        tdApi.prepareFeeCalculation(codes, extras)
-    }
-
-    override fun calculateValue(
-        code: String,
-        direction: Direction,
-        volume: Int,
-        price: Double?,
-        extras: Map<String, String>?
-    ): Double {
-        return tdApi.calculateValue(code, direction, volume, price, extras)
-    }
-
-    override fun calculatePosition(position: Position, extras: Map<String, String>?) {
-        tdApi.calculatePosition(position, extras = extras)
-    }
-
-    override fun calculateOrder(order: Order, extras: Map<String, String>?) {
-        tdApi.calculateOrder(order, extras)
-    }
-
-    override fun calculateTrade(trade: Trade, extras: Map<String, String>?) {
-        tdApi.calculateTrade(trade, extras)
     }
 }

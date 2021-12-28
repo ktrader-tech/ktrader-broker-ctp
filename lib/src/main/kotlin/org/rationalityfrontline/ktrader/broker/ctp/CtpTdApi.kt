@@ -18,7 +18,6 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
-import kotlin.math.max
 import kotlin.math.sign
 
 internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) {
@@ -92,6 +91,12 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 缓存的合约信息，key 为合约 code
      */
     val instruments: MutableMap<String, SecurityInfo> = mutableMapOf()
+    /** 当前交易日已查询过保证金费率的证券代码 */
+    private val marginRateQueriedCodes: MutableSet<String> = mutableSetOf()
+    /** 当前交易日已查询过手续费率的证券代码 */
+    private val commissionRateQueriedCodes: MutableSet<String> = mutableSetOf()
+    /** 当前交易日已查询过日级价格信息（涨跌停价、昨收昨结昨仓）的证券代码 */
+    private val dayPriceInfoQueriedCodes: MutableSet<String> = mutableSetOf()
     /**
      * 品种代码表，key 为合约 code，value 为品种代码(productId)。用于从 code 快速映射到 [productStatusMap]
      */
@@ -204,6 +209,13 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             Direction.SHORT -> unfinishedShortOrders.remove(order)
             Direction.UNKNOWN -> postBrokerLogEvent(LogLevel.WARNING, "【CtpTdApi.removeUnfinishedOrder】订单方向为 Direction.UNKNOWN（${order.code}, ${order.orderId}）")
         }
+    }
+
+    /**
+     * 判断是否存在标签为 [tag] 的未完成的协程请求
+     */
+    private fun hasRequest(tag: String): Boolean {
+        return requestMap.values.find { it.tag == tag } != null
     }
 
     /**
@@ -380,12 +392,14 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (extras != null) {
                     putAll(extras)
                 }
-                if (isTestingTickToTrade) {
-                    put("tttTime", insertTime.toString())
-                }
             }
         )
         if (errorInfo == null) {
+            if (isTestingTickToTrade) {
+                order.tttTime = insertTime!!
+            }
+            ensureFullSecurityInfo(code)
+            getOrQueryTick(code).first?.calculateOrderFrozenCash(order)
             todayOrders[orderRef] = order
             insertUnfinishedOrder(order)
         } else {
@@ -436,323 +450,60 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 查询最新 [Tick]
+     * 确保证券 [code] 对应的 [SecurityInfo] 信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓））
      */
-    suspend fun queryLastTick(code: String, useCache: Boolean, extras: Map<String, String>? = null): Tick? {
-        if (useCache) {
-            val cachedTick = mdApi.lastTicks[code]
-            if (cachedTick != null) {
-                cachedTick.status = getInstrumentStatus(code)
-                cachedTickMap[code] = cachedTick
-                return cachedTick
+    suspend fun ensureFullSecurityInfo(code: String, throwException: Boolean = true) {
+        val info = instruments[code] ?: return
+        fun handleException(e: Exception, msg: String) {
+            if (throwException){
+                throw e
+            } else {
+                postBrokerLogEvent(LogLevel.ERROR, msg)
             }
         }
-        val qryField = CThostFtdcQryDepthMarketDataField().apply {
-            instrumentID = parseCode(code).second
-        }
-        val requestId = nextRequestId()
-        return runWithResultCheck({ tdApi.ReqQryDepthMarketData(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = code)
-            }
-        })
-    }
-
-    /**
-     * 查询某一特定合约的信息。[extras.queryFee: Boolean = false]【是否查询保证金率及手续费率，如果之前没查过，可能会耗时。当 useCache 为 false 时无效】
-     */
-    suspend fun queryInstrument(code: String, useCache: Boolean = true, extras: Map<String, String>? = null): SecurityInfo? {
-        if (useCache) {
-            val cachedInstrument = instruments[code]
-            if (cachedInstrument != null) {
-                if (extras?.get("queryFee") == "true") {
-                    prepareFeeCalculation(code)
+        when (info.type) {
+            SecurityType.FUTURES -> {
+                if (info.marginRateLong == 0.0) {
+                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期货保证金率：$code")
+                    runWithRetry({ queryFuturesMarginRate(code) }) { e ->
+                        handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期货保证金率出错：$code, $e")
+                    }
                 }
-                return cachedInstrument
-            }
-        }
-        val (exchangeId, instrumentId) = parseCode(code)
-        val qryField = CThostFtdcQryInstrumentField().apply {
-            exchangeID = exchangeId
-            instrumentID = instrumentId
-        }
-        val requestId = nextRequestId()
-        return runWithResultCheck({ tdApi.ReqQryInstrument(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = code)
-            }
-        })
-    }
-
-    /**
-     * 查询全市场合约的信息
-     */
-    suspend fun queryAllInstruments(useCache: Boolean = true, extras: Map<String, String>? = null): List<SecurityInfo> {
-        if (useCache && instruments.isNotEmpty()) return instruments.values.toList()
-        val qryField = CThostFtdcQryInstrumentField()
-        val requestId = nextRequestId()
-        return runWithResultCheck({ tdApi.ReqQryInstrument(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<SecurityInfo>())
-            }
-        })
-    }
-
-    /**
-     * 依据 [orderId] 查询 [Order]。[orderId] 格式为 frontId_sessionId_orderRef。未找到对应订单时返回 null。
-     */
-    suspend fun queryOrder(orderId: String, useCache: Boolean = true, extras: Map<String, String>? = null): Order? {
-        if (useCache) {
-            var order: Order? = todayOrders[orderId.split("_").last()] ?: todayOrders[orderId]
-            if (order != null && order.orderId != orderId) {
-                order = null
-            }
-            if (order != null) {
-                calculateOrder(order)
-                return order
-            }
-        }
-        val qryField = CThostFtdcQryOrderField().apply {
-            brokerID = config.brokerId
-            investorID = config.investorId
-        }
-        val requestId = nextRequestId()
-        return runWithResultCheck<Order?>({ tdApi.ReqQryOrder(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryOrdersData(orderId))
-            }
-        })?.apply { calculateOrder(this) }
-    }
-
-    /**
-     * 查询订单
-     */
-    suspend fun queryOrders(code: String? = null, onlyUnfinished: Boolean = true, useCache: Boolean = true, extras: Map<String, String>? = null): List<Order> {
-        if (useCache) {
-            var orders: List<Order> = if (onlyUnfinished) {
-                mutableListOf<Order>().apply {
-                    addAll(unfinishedLongOrders)
-                    addAll(unfinishedShortOrders)
+                if (info.openCommissionRate == 0.0) {
+                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期货手续费率：$code")
+                    runWithRetry({ queryFuturesCommissionRate(code) }) { e ->
+                        handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期货手续费率出错：$code, $e")
+                    }
                 }
-            } else todayOrders.values.toList()
-            if (code != null) {
-                orders = orders.filter { it.code == code }
-            }
-            return orders.onEach {
-                if (it.offset == OrderOffset.OPEN && it.volume > it.filledVolume) {
-                    calculateOrder(it)
+                if (info.todayHighLimitPrice == 0.0 && code !in dayPriceInfoQueriedCodes) {
+                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期货最新 Tick：$code")
+                    runWithRetry({ queryLastTick(code, false) }) { e ->
+                        handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期货最新 Tick出错：$code, $e")
+                    }
                 }
             }
-        } else {
-            val qryField = CThostFtdcQryOrderField().apply {
-                brokerID = config.brokerId
-                investorID = config.investorId
-                if (code != null) {
-                    val (excId, insId) = parseCode(code)
-                    exchangeID = excId
-                    instrumentID = insId
+            SecurityType.OPTIONS -> {
+                if (info.marginRateLong == 0.0) {
+                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期权保证金率：$code")
+                    runWithRetry({ queryOptionsMargin(code) }) { e ->
+                        handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期保证金出错：$code, $e")
+                    }
+                }
+                if (info.openCommissionRate == 0.0) {
+                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期权手续费率：$code")
+                    runWithRetry({ queryOptionsCommissionRate(code) }) { e ->
+                        handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期权手续费率出错：$code, $e")
+                    }
+                }
+                if (info.todayHighLimitPrice == 0.0 && code !in dayPriceInfoQueriedCodes) {
+                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期权最新 Tick：$code")
+                    runWithRetry({ queryLastTick(code, false) }) { e ->
+                        handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期权最新 Tick出错：$code, $e")
+                    }
                 }
             }
-            val requestId = nextRequestId()
-            return runWithResultCheck<List<Order>>({ tdApi.ReqQryOrder(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryOrdersData(null, code, onlyUnfinished))
-                }
-            }).onEach { calculateOrder(it) }
+            else -> Unit
         }
-    }
-
-    /**
-     * 依据 [tradeId] 查询 [Trade]。[tradeId] 格式为 tradeId_orderRef。未找到对应成交记录时返回 null。
-     */
-    suspend fun queryTrade(tradeId: String, useCache: Boolean = true, extras: Map<String, String>? = null): Trade? {
-        if (useCache) {
-            val trade = todayTrades.find { it.tradeId == tradeId }
-            if (trade != null) return trade
-        }
-        val qryField = CThostFtdcQryTradeField().apply {
-            brokerID = config.brokerId
-            investorID = config.investorId
-            tradeID = tradeId.split("_").first()
-        }
-        val requestId = nextRequestId()
-        return runWithResultCheck<Trade?>({ tdApi.ReqQryTrade(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryTradesData(tradeId))
-            }
-        })?.apply { calculateTrade(this) }
-    }
-
-    /**
-     * 查询成交记录
-     */
-    suspend fun queryTrades(code: String? = null,  orderId: String? = null, useCache: Boolean = true, extras: Map<String, String>? = null): List<Trade> {
-        if (useCache) {
-            return when {
-                orderId != null -> todayTrades.filter { it.orderId == orderId }
-                code != null -> todayTrades.filter { it.code == code }
-                else -> todayTrades.toList()
-            }
-        } else {
-            val reqData = QueryTradesData()
-            val qryField = CThostFtdcQryTradeField().apply {
-                brokerID = config.brokerId
-                investorID = config.investorId
-                if (code != null) {
-                    val (excId, insId) = parseCode(code)
-                    exchangeID = excId
-                    instrumentID = insId
-                    reqData.code = code
-                }
-                if (orderId != null) {
-                    val order = todayOrders[orderId.split("_").last()] ?: todayOrders[orderId] ?: return listOf()
-                    val (excId, insId) = parseCode(order.code)
-                    exchangeID = excId
-                    instrumentID = insId
-                    reqData.orderSysId = order.orderSysId
-                }
-            }
-            val requestId = nextRequestId()
-            return runWithResultCheck<List<Trade>>({ tdApi.ReqQryTrade(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, data = reqData)
-                }
-            }).onEach { calculateTrade(it) }
-        }
-    }
-
-    /**
-     * 查询账户资金信息
-     */
-    suspend fun queryAssets(useCache: Boolean = true, extras: Map<String, String>? = null): Assets {
-        // 10 秒内，使用上次查询结果
-        if (useCache && System.currentTimeMillis() - lastQueryAssetsTime < 10000) {
-            return assets.deepCopy()
-        }
-        val qryField = CThostFtdcQryTradingAccountField().apply {
-            brokerID = config.brokerId
-            investorID = config.investorId
-            currencyID = "CNY"
-        }
-        val requestId = nextRequestId()
-        return runWithResultCheck<Assets>({ tdApi.ReqQryTradingAccount(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation)
-            }
-        }).apply {
-            assets = this
-            lastQueryAssetsTime = System.currentTimeMillis()
-            positionPnl = 0.0
-            positions.values.forEach { bi ->
-                bi.long?.let {
-                    calculatePosition(it, false)
-                    positionPnl += it.pnl
-                }
-                bi.short?.let {
-                    calculatePosition(it, false)
-                    positionPnl += it.pnl
-                }
-            }
-        }
-    }
-
-    /**
-     * 查询本地维护的持仓信息中合约 [code] 的持仓信息。如果 [isClose] 为 false（默认），返回其 [direction] 持仓，否则返回 [direction] 的反向持仓。如无持仓，返回 null
-     */
-    private fun queryCachedPosition(code: String, direction: Direction, isClose: Boolean = false): Position? {
-        if (direction == Direction.UNKNOWN) return null
-        val biPosition = positions[code] ?: return null
-        return when (direction) {
-            Direction.LONG -> if (isClose) biPosition.short else biPosition.long
-            Direction.SHORT -> if (isClose) biPosition.long else biPosition.short
-            else -> null
-        }
-    }
-
-    /**
-     * 查询合约 [code] 的 [direction] 方向的持仓信息
-     */
-    suspend fun queryPosition(code: String, direction: Direction, useCache: Boolean = true, extras: Map<String, String>? = null): Position? {
-        if (direction == Direction.UNKNOWN) return null
-        return if (useCache) {
-            queryCachedPosition(code, direction)?.deepCopy()
-        } else {
-            val qryField = CThostFtdcQryInvestorPositionField().apply {
-                instrumentID = parseCode(code).second
-            }
-            val requestId = nextRequestId()
-            runWithResultCheck({ tdApi.ReqQryInvestorPosition(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, tag = direction.name, data = mutableListOf<Position>())
-                }
-            })
-        }
-    }
-
-    /**
-     * 查询持仓信息，如果 [code] 为 null（默认），则查询账户整体持仓信息
-     */
-    suspend fun queryPositions(code: String? = null, useCache: Boolean = true, extras: Map<String, String>? = null): List<Position> {
-        if (useCache) {
-            val positionList = mutableListOf<Position>()
-            // 查询全体持仓
-            if (code.isNullOrEmpty()) {
-                positions.values.forEach { biPosition ->
-                    biPosition.long?.let { positionList.add(it) }
-                    biPosition.short?.let { positionList.add(it) }
-                }
-            } else { // 查询单合约持仓
-                positions[code]?.let { biPosition ->
-                    biPosition.long?.let { positionList.add(it) }
-                    biPosition.short?.let { positionList.add(it) }
-                }
-            }
-            positionList.forEach { calculatePosition(it) }
-            return positionList.map { it.deepCopy() }
-        } else {
-            val qryField = CThostFtdcQryInvestorPositionField().apply {
-                if (!code.isNullOrEmpty()) instrumentID = parseCode(code).second
-            }
-            val requestId = nextRequestId()
-            return runWithResultCheck({ tdApi.ReqQryInvestorPosition(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, tag = code ?: "", data = mutableListOf<Position>())
-                }
-            })
-        }
-    }
-
-    /**
-     * 查询合约 [code] 的 [direction] 方向的持仓明细
-     */
-    suspend fun queryPositionDetails(code: String, direction: Direction, useCache: Boolean, extras: Map<String, String>?): PositionDetails? {
-        val qryField = CThostFtdcQryInvestorPositionDetailField().apply {
-            brokerID = config.brokerId
-            investorID = config.investorId
-            instrumentID = parseCode(code).second
-        }
-        val requestId = nextRequestId()
-        return runWithResultCheck({ tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code, direction))
-            }
-        })
-    }
-
-    /**
-     * 查询持仓明细，如果 [code] 为 null（默认），则查询账户整体持仓明细
-     */
-    suspend fun queryPositionDetails(code: String?, useCache: Boolean, extras: Map<String, String>?): List<PositionDetails> {
-        val qryField = CThostFtdcQryInvestorPositionDetailField().apply {
-            brokerID = config.brokerId
-            investorID = config.investorId
-        }
-        val requestId = nextRequestId()
-        return runWithResultCheck({ tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code))
-            }
-        })
     }
 
     /**
@@ -790,8 +541,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
             })
         } else {
-            val instrument = instruments[code]
-            if (instrument != null && instrument.marginRate == null && instrument.type == SecurityType.FUTURES) {
+            val info = instruments[code]
+            if (info != null && info.type == SecurityType.FUTURES && code !in marginRateQueriedCodes) {
                 val qryField = CThostFtdcQryInstrumentMarginRateField().apply {
                     brokerID = config.brokerId
                     investorID = config.investorId
@@ -826,8 +577,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
             })
         } else {
-            val instrument = instruments[code]
-            if (instrument != null && instrument.marginRate == null && instrument.type == SecurityType.OPTIONS) {
+            val info = instruments[code]
+            if (info != null && info.type == SecurityType.OPTIONS && code !in marginRateQueriedCodes) {
                 val qryField = CThostFtdcQryOptionInstrTradeCostField().apply {
                     brokerID = config.brokerId
                     investorID = config.investorId
@@ -861,8 +612,8 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
             }).forEach { it.join() }
         } else {
-            val instrument = instruments[code]
-            if (instrument != null && instrument.commissionRate == null && instrument.type == SecurityType.FUTURES) {
+            val info = instruments[code]
+            if (info != null && info.type == SecurityType.FUTURES && code !in commissionRateQueriedCodes) {
                 val qryField = CThostFtdcQryInstrumentCommissionRateField().apply {
                     brokerID = config.brokerId
                     investorID = config.investorId
@@ -916,7 +667,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             })
         } else {
             val instrument = instruments[code]
-            if (instrument != null && instrument.commissionRate == null && instrument.type == SecurityType.OPTIONS) {
+            if (instrument != null && instrument.type == SecurityType.OPTIONS && code !in commissionRateQueriedCodes) {
                 val qryField = CThostFtdcQryOptionInstrCommRateField().apply {
                     brokerID = config.brokerId
                     investorID = config.investorId
@@ -935,106 +686,52 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 获取缓存的期货/期权手续费率，如果没有，则查询后再获取
+     * 查询最新 [Tick]。如果对应的 [instruments] 无当日价格信息（涨跌停价、昨收昨结昨仓），则自动将当日价格信息写入其中
      */
-    private fun getOrQueryCommissionRate(instrument: SecurityInfo): CommissionRate? {
-        if (config.disableFeeCalculation) return null
-        if (instrument.commissionRate == null) {
-            runBlocking { prepareFeeCalculation(instrument.code, false) }
-        }
-        return instrument.commissionRate
-    }
-
-    /**
-     * 获取缓存的期货保证金率，如果没有，则查询后再获取
-     */
-    private fun getOrQueryMarginRate(instrument: SecurityInfo): MarginRate? {
-        if (config.disableFeeCalculation) return null
-        if (instrument.marginRate == null) {
-            runBlocking { prepareFeeCalculation(instrument.code, false) }
-        }
-        return instrument.marginRate
-    }
-
-    /**
-     * 查询单一合约的手续费率及保证金率，查询到的结果会自动更新到对应的 [instruments] 中，已经查过的不会再次查询
-     */
-    private suspend fun prepareFeeCalculation(code: String, throwException: Boolean = true) {
-        val instrument = instruments[code] ?: return
-        fun handleException(e: Exception, msg: String) {
-            if (throwException){
-                throw e
-            } else {
-                postBrokerLogEvent(LogLevel.ERROR, msg)
+    suspend fun queryLastTick(code: String, useCache: Boolean, extras: Map<String, String>? = null): Tick? {
+        var resultTick: Tick? = null
+        if (useCache) {
+            val cachedTick = mdApi.lastTicks[code]
+            if (cachedTick != null) {
+                cachedTick.status = getInstrumentStatus(code)
+                cachedTickMap[code] = cachedTick
+                resultTick =  cachedTick
             }
-        }
-        when (instrument.type) {
-            SecurityType.FUTURES -> {
-                if (instrument.commissionRate == null) {
-                    postBrokerLogEvent(LogLevel.INFO, "自动查询期货手续费率：$code")
-                    runWithRetry({ queryFuturesCommissionRate(code) }) { e ->
-                        handleException(e, "【CtpTdApi.prepareFeeCalculation】查询期货手续费率出错：$code, $e")
-                    }
-                }
-                if (instrument.marginRate == null) {
-                    postBrokerLogEvent(LogLevel.INFO, "自动查询期货保证金率：$code")
-                    runWithRetry({ queryFuturesMarginRate(code) }) { e ->
-                        handleException(e, "【CtpTdApi.prepareFeeCalculation】查询期货保证金率出错：$code, $e")
-                    }
-                }
-            }
-            SecurityType.OPTIONS -> {
-                if (instrument.commissionRate == null) {
-                    postBrokerLogEvent(LogLevel.INFO, "自动查询期权手续费率：$code")
-                    runWithRetry({ queryOptionsCommissionRate(code) }) { e ->
-                        handleException(e, "查询期权手续费率出错：$code, $e")
-                    }
-                }
-                if (instrument.marginRate == null) {
-                    postBrokerLogEvent(LogLevel.INFO, "自动查询期权保证金率：$code")
-                    runWithRetry({ queryOptionsMargin(code) }) { e ->
-                        handleException(e, "查询期保证金出错：$code, $e")
-                    }
-                }
-            }
-            else -> Unit
-        }
-    }
-
-    /**
-     * 查询手续费率及保证金率，只有查过费率的合约，其返回的 [Trade], [Order], [Position] 才会带有手续费、保证金等相关信息。
-     * 查询到的结果会自动更新到对应的 [instruments] 中，已经查过的不会再次查询
-     */
-    suspend fun prepareFeeCalculation(codes: Collection<String>? = null, extras: Map<String, String>? = null) {
-        if (codes == null) {
-            runWithRetry({ queryFuturesCommissionRate() })
-            runWithRetry({ queryFuturesMarginRate() })
-            runWithRetry({ queryOptionsCommissionRate() })
-            runWithRetry({ queryOptionsMargin() })
         } else {
-            codes.forEach {
-                prepareFeeCalculation(it)
+            val qryField = CThostFtdcQryDepthMarketDataField().apply {
+                instrumentID = parseCode(code).second
             }
+            val requestId = nextRequestId()
+            resultTick = runWithResultCheck({ tdApi.ReqQryDepthMarketData(qryField, requestId) }, {
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
+                    requestMap[requestId] = RequestContinuation(requestId, continuation, data = code)
+                }
+            })
         }
+        val info = instruments[code]
+        if (info?.type == SecurityType.OPTIONS && resultTick != null) {
+            resultTick.optionsUnderlyingPrice = getOrQueryTick(info.optionsUnderlyingCode).first?.price ?: 0.0
+        }
+        return resultTick
     }
 
     /**
-     * 获取缓存的最新/旧的 [Tick]，如果都没有，那么试图查询最新的并缓存
+     * 获取缓存的最新/旧的 [Tick]，如果都没有，那么试图查询最新的并缓存，并且自动订阅行情
      * @return [Pair.first] 为查询到的 [Tick]，可能为 null。[Pair.second] 为 [Boolean]，表示查询到的 Tick 是否是实时最新的
      */
-    private fun getOrQueryTick(code: String): Pair<Tick?, Boolean> {
+    private suspend fun getOrQueryTick(code: String): Pair<Tick?, Boolean> {
         var tick: Tick? = null
         var isLatestTick = false // 查询到的 tick 是否是最新的
-        // 如果行情已连接且未禁止自动订阅，则优先尝试获取行情缓存的最新 tick
-        if (mdApi.connected && !config.disableAutoSubscribe) {
+        // 如果行情已连接，则优先尝试获取行情缓存的最新 tick
+        if (mdApi.connected) {
             tick = mdApi.lastTicks[code]
             // 如果缓存的 tick 为空，说明未订阅该合约，那么订阅该合约以方便后续计算
             if (tick == null) {
                 try {
-                    postBrokerLogEvent(LogLevel.INFO, "自动订阅行情：$code")
-                    runBlocking { mdApi.subscribeMarketData(listOf(code)) }
+                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.getOrQueryTick】自动订阅行情：$code")
+                    mdApi.subscribeMarketData(listOf(code))
                 } catch (e: Exception) {
-                    postBrokerLogEvent(LogLevel.ERROR, "【CtpTdApi.getOrQueryTick】计算保证金时自动订阅合约行情失败：$code, $e")
+                    postBrokerLogEvent(LogLevel.ERROR, "【CtpTdApi.getOrQueryTick】自动订阅合约行情失败：$code, $e")
                 }
             } else {
                 isLatestTick = true
@@ -1045,237 +742,395 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             tick = cachedTickMap[code]
             // 如果未从本地缓存中获得旧的 tick，查询最新 tick（查询操作会自动缓存 tick 至本地缓存中）
             if (tick == null) {
-                runBlocking {
-                    postBrokerLogEvent(LogLevel.INFO, "自动查询并缓存最新 Tick：$code")
-                    tick = runWithRetry({ queryLastTick(code, useCache = false) }) { e->
-                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdApi.getOrQueryTick】查询合约最新 Tick 失败：$code, $e")
-                        null
-                    }
-                    if (tick != null)isLatestTick = true
+                postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.getOrQueryTick】自动查询并缓存最新 Tick：$code")
+                tick = runWithRetry({ queryLastTick(code, useCache = false) }) { e->
+                    postBrokerLogEvent(LogLevel.ERROR, "【CtpTdApi.getOrQueryTick】查询合约最新 Tick 失败：$code, $e")
+                    null
                 }
+                if (tick != null) isLatestTick = true
             }
         }
         return Pair(tick, isLatestTick)
     }
 
     /**
-     * 计算期货保证金
+     * 查询某一特定合约的信息。[extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时。当 useCache 为 false 时无效】
      */
-    private fun calculateFuturesMargin(instrument: SecurityInfo, direction: Direction, yesterdayVolume: Int, todayVolume: Int, avgOpenPrice: Double, fallback: Double): Double {
-        if (yesterdayVolume + todayVolume == 0) return 0.0
-        val marginRate = getOrQueryMarginRate(instrument) ?: return fallback
-        val (tick, isLatestTick) = getOrQueryTick(instrument.code)
-        if (tick == null) {
-            return fallback
-        } else {
-            fun calculateMargin(volume: Int, price: Double): Double {
-                return when (direction) {
-                    Direction.LONG -> volume * marginRate.longMarginRatioByVolume + volume * instrument.volumeMultiple * price * marginRate.longMarginRatioByMoney
-                    Direction.SHORT -> volume * marginRate.shortMarginRatioByVolume + volume * instrument.volumeMultiple * price * marginRate.shortMarginRatioByMoney
-                    else -> 0.0
+    suspend fun querySecurity(code: String, useCache: Boolean = true, extras: Map<String, String>? = null): SecurityInfo? {
+        if (useCache) {
+            val cachedInstrument = instruments[code]
+            if (cachedInstrument != null) {
+                if (extras?.get("ensureFullInfo") == "true") {
+                    ensureFullSecurityInfo(code)
                 }
+                return cachedInstrument
             }
-            var settlementVolume = yesterdayVolume  // 用昨结算价计算保证金的持仓
-            var todayMargin = 0.0  // 与现价相关的保证金
-            // 如果存在今仓
-            if (todayVolume > 0) {
-                if (futuresMarginPriceType == MarginPriceType.OPEN_PRICE) {
-                    todayMargin = calculateMargin(todayVolume, avgOpenPrice)
-                } else {
-                    if (isLatestTick) {
-                        // 如果保证金价格类型与现价有关，那么特别计算今仓保证金
-                        when (futuresMarginPriceType) {
-                            MarginPriceType.TODAY_SETTLEMENT_PRICE -> todayMargin = calculateMargin(todayVolume, tick.todayAvgPrice)
-                            MarginPriceType.LAST_PRICE -> todayMargin = calculateMargin(todayVolume, tick.lastPrice)
-                            else -> settlementVolume += todayVolume
-                        }
-                    } else {
-                        settlementVolume += todayVolume
-                    }
-                }
-            }
-            val settlementMargin = calculateMargin(settlementVolume,  tick.preSettlementPrice)
-            return todayMargin + settlementMargin
         }
+        val (exchangeId, instrumentId) = parseCode(code)
+        val qryField = CThostFtdcQryInstrumentField().apply {
+            exchangeID = exchangeId
+            instrumentID = instrumentId
+        }
+        val requestId = nextRequestId()
+        return runWithResultCheck({ tdApi.ReqQryInstrument(qryField, requestId) }, {
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
+                requestMap[requestId] = RequestContinuation(requestId, continuation, data = code)
+            }
+        })
     }
 
     /**
-     * 计算期权保证金
+     * 查询全市场合约的信息。[extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会很耗时。当 useCache 为 false 时无效】
      */
-    private fun calculateOptionsMargin(instrument: SecurityInfo, direction: Direction, volume: Int, avgOpenPrice: Double, fallback: Double, isOpen: Boolean): Double {
-        if (volume == 0) return 0.0
-        when (direction) {
-            Direction.LONG -> {  // 买方
-                return if (isOpen) avgOpenPrice * instrument.volumeMultiple else 0.0
-            }
-            Direction.SHORT -> {  // 卖方
-                val marginRate = getOrQueryMarginRate(instrument) ?: return fallback
-                fun calculateMargin(price: Double): Double {
-                    return volume * max((price * instrument.volumeMultiple + marginRate.longMarginRatioByMoney), marginRate.shortMarginRatioByMoney)
-                }
-                if (optionsMarginPriceType == MarginPriceType.OPEN_PRICE && !isOpen) {  // 唯一一种不需查询 Tick 的情况
-                    return calculateMargin(avgOpenPrice)
-                }
-                val (tick, isLatestTick) = getOrQueryTick(instrument.code)
-                return if (tick == null) {
-                    fallback
-                } else {
-                    val price = if (isLatestTick) {
-                        when (optionsMarginPriceType) {
-                            MarginPriceType.MAX_PRE_SETTLEMENT_PRICE_LAST_PRICE -> max(tick.lastPrice, tick.preSettlementPrice)
-                            MarginPriceType.LAST_PRICE -> tick.lastPrice
-                            else -> tick.preSettlementPrice
-                        }
-                    } else {
-                        tick.preSettlementPrice
-                    }
-                    calculateMargin(price)
+    suspend fun queryAllSecurities(useCache: Boolean = true, extras: Map<String, String>? = null): List<SecurityInfo> {
+        if (useCache && instruments.isNotEmpty()) {
+            if (extras?.get("ensureFullInfo") == "true") {
+                instruments.keys.forEach {
+                    ensureFullSecurityInfo(it)
                 }
             }
-            else -> return fallback
+            return instruments.values.toList()
         }
+        val qryField = CThostFtdcQryInstrumentField()
+        val requestId = nextRequestId()
+        return runWithResultCheck({ tdApi.ReqQryInstrument(qryField, requestId) }, {
+            suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
+                requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<SecurityInfo>())
+            }
+        })
     }
 
     /**
-     * 计算证券价值（保证金/市值）
-     * @param code 证券代码
-     * @param direction 持仓方向
-     * @param volume 持仓量
-     * @param price 证券价格，传入 null 则使用最新价计算
-     * @return 证券价值。如果无法计算，则返回负数（-1.0）
+     * 按 [SecurityInfo.productId] 查询证券信息。[extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时。当 useCache 为 false 时无效】
+     * @param productId 证券品种
      */
-    fun calculateValue(
-        code: String,
-        direction: Direction,
-        volume: Int,
-        price: Double?,
+    suspend fun querySecurities(
+        productId: String,
+        useCache: Boolean,
         extras: Map<String, String>?
-    ): Double {
-        val finalPrice: Double = if (price == null) {
-            val (tick, _) = getOrQueryTick(code)
-            tick?.lastPrice ?: return -1.0
-        } else price
-        val instrument = instruments[code] ?: return -1.0
-        return when (instrument.type) {
-            SecurityType.FUTURES -> calculateFuturesMargin(instrument, direction, 0, volume, finalPrice, 0.0)
-            SecurityType.OPTIONS -> calculateOptionsMargin(instrument, direction, volume, finalPrice, 0.0, true)
-            else -> -1.0
+    ): List<SecurityInfo> {
+        if (useCache && instruments.isNotEmpty()) {
+            val results = instruments.values.filter { it.productId == productId }
+            if (extras?.get("ensureFullInfo") == "true") {
+                results.forEach {
+                    ensureFullSecurityInfo(it.code)
+                }
+            }
+            return results
+        }
+        return queryAllSecurities(useCache = false).filter { it.productId == productId }
+    }
+
+    /**
+     * 按标的物代码查询期权信息。[extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时。当 useCache 为 false 时无效】
+     * @param underlyingCode 期权标的物的代码
+     * @param type 期权的类型，默认为 null，表示返回所有类型的期权
+     */
+    suspend fun queryOptions(
+        underlyingCode: String,
+        type: OptionsType? = null,
+        useCache: Boolean = true,
+        extras: Map<String, String>? = null
+    ): List<SecurityInfo> {
+        if (useCache && instruments.isNotEmpty()) {
+            val results = instruments.values.filter { it.type == SecurityType.OPTIONS && it.optionsUnderlyingCode == underlyingCode }
+            if (extras?.get("ensureFullInfo") == "true") {
+                results.forEach {
+                    ensureFullSecurityInfo(it.code)
+                }
+            }
+            return results
+        }
+        return queryAllSecurities(useCache = false).filter { it.type == SecurityType.OPTIONS && it.optionsUnderlyingCode == underlyingCode }
+    }
+
+    /**
+     * 依据 [orderId] 查询 [Order]。[orderId] 格式为 frontId_sessionId_orderRef。未找到对应订单时返回 null。
+     */
+    suspend fun queryOrder(orderId: String, useCache: Boolean = true, extras: Map<String, String>? = null): Order? {
+        if (useCache) {
+            var order: Order? = todayOrders[orderId.split("_").last()] ?: todayOrders[orderId]
+            if (order != null && order.orderId != orderId) {
+                order = null
+            }
+            if (order != null) {
+                ensureFullSecurityInfo(order.code)
+                getOrQueryTick(order.code).first?.calculateOrderFrozenCash(order)
+                return order
+            }
+        }
+        val qryField = CThostFtdcQryOrderField().apply {
+            brokerID = config.brokerId
+            investorID = config.investorId
+        }
+        val requestId = nextRequestId()
+        return runWithResultCheck<Order?>({ tdApi.ReqQryOrder(qryField, requestId) }, {
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
+                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryOrdersData(orderId))
+            }
+        })?.apply {
+            ensureFullSecurityInfo(code)
+            getOrQueryTick(code).first?.calculateOrderFrozenCash(this)
         }
     }
 
     /**
-     * 计算 Position 的 value, avgOpenPrice, lastPrice, pnl
-     * @param calculateValue 是否计算保证金，默认为 true
+     * 查询订单
      */
-    fun calculatePosition(position: Position, calculateValue: Boolean = true, extras: Map<String, String>? = null) {
-        val instrument = instruments[position.code] ?: return
-        if (instrument.type == SecurityType.FUTURES || instrument.type == SecurityType.OPTIONS) {
-            // 计算开仓均价
-            if (position.volume != 0 && instrument.volumeMultiple != 0) {
-                position.avgOpenPrice = position.openCost / position.volume / instrument.volumeMultiple
+    suspend fun queryOrders(code: String? = null, onlyUnfinished: Boolean = true, useCache: Boolean = true, extras: Map<String, String>? = null): List<Order> {
+        val results = if (useCache) {
+            var orders: List<Order> = if (onlyUnfinished) {
+                mutableListOf<Order>().apply {
+                    addAll(unfinishedLongOrders)
+                    addAll(unfinishedShortOrders)
+                }
+            } else todayOrders.values.toList()
+            if (code != null) {
+                orders = orders.filter { it.code == code }
             }
-            // 获取最新价并计算 pnl
-            val lastTick =  mdApi.lastTicks[position.code]
-            if (lastTick != null && position.volume > 0) {
-                position.lastPrice = lastTick.lastPrice
-                position.pnl = position.lastPrice * instrument.volumeMultiple * position.volume - position.openCost
-                if (position.direction == Direction.SHORT) {
-                    position.pnl *= -1
+            orders
+        } else {
+            val qryField = CThostFtdcQryOrderField().apply {
+                brokerID = config.brokerId
+                investorID = config.investorId
+                if (code != null) {
+                    val (excId, insId) = parseCode(code)
+                    exchangeID = excId
+                    instrumentID = insId
                 }
             }
-            // 计算保证金
-            if (calculateValue) {
-                when (instrument.type) {
-                    SecurityType.FUTURES -> {
-                        // 这里传入的开仓成本是全体开仓成本，而不是今仓开仓成本，这导致在保证金价格类型为 OPEN_PRICE 时的保证金计算会不准确
-                        position.value = calculateFuturesMargin(instrument, position.direction, position.yesterdayVolume, position.todayVolume, position.avgOpenPrice, position.value)
-                    }
-                    SecurityType.OPTIONS -> {
-                        position.value = calculateOptionsMargin(instrument, position.direction, position.volume, position.avgOpenPrice, position.value, false)
-                    }
-                    else -> Unit
+            val requestId = nextRequestId()
+            runWithResultCheck({ tdApi.ReqQryOrder(qryField, requestId) }, {
+                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
+                    requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryOrdersData(null, code, onlyUnfinished))
                 }
+            })
+        }
+        return results.onEach {
+            if (it.offset == OrderOffset.OPEN && it.volume > it.filledVolume) {
+                ensureFullSecurityInfo(it.code)
+                getOrQueryTick(it.code).first?.calculateOrderFrozenCash(it)
             }
         }
     }
 
     /**
-     * 计算 Order 的 avgFillPrice, frozenCash, 申报手续费（仅限中金所股指期货）。turnover 由 OnRtnTrade 中的 Trade.turnover 累加得到。
+     * 依据 [tradeId] 查询 [Trade]。[tradeId] 格式为 tradeId_orderRef。未找到对应成交记录时返回 null。
      */
-    fun calculateOrder(order: Order, extras: Map<String, String>? = null) {
-        val instrument = instruments[order.code] ?: return
-        if (instrument.type == SecurityType.FUTURES || instrument.type == SecurityType.OPTIONS) {
-            // 计算成交均价
-            if (order.filledVolume != 0 && instrument.volumeMultiple != 0) {
-                order.avgFillPrice = order.turnover / order.filledVolume / instrument.volumeMultiple
+    suspend fun queryTrade(tradeId: String, useCache: Boolean = true, extras: Map<String, String>? = null): Trade? {
+        if (useCache) {
+            val trade = todayTrades.find { it.tradeId == tradeId }
+            if (trade != null) return trade
+        }
+        val qryField = CThostFtdcQryTradeField().apply {
+            brokerID = config.brokerId
+            investorID = config.investorId
+            tradeID = tradeId.split("_").first()
+        }
+        val requestId = nextRequestId()
+        return runWithResultCheck<Trade?>({ tdApi.ReqQryTrade(qryField, requestId) }, {
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
+                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryTradesData(tradeId))
             }
-            // 如果是开仓，计算冻结资金
-            val restVolume = order.volume - order.filledVolume
-            if (order.offset == OrderOffset.OPEN && restVolume > 0) {
-                when (instrument.type) {
-                    SecurityType.FUTURES -> order.frozenCash = calculateFuturesMargin(instrument, order.direction, 0, restVolume, order.price, 0.0)
-                    SecurityType.OPTIONS -> order.frozenCash = calculateOptionsMargin(instrument, order.direction, restVolume, order.price, 0.0, true)
-                    else -> return
+        })?.apply {
+            ensureFullSecurityInfo(code)
+            getOrQueryTick(code).first?.calculateTrade(this)
+        }
+    }
+
+    /**
+     * 查询成交记录
+     */
+    suspend fun queryTrades(code: String? = null,  orderId: String? = null, useCache: Boolean = true, extras: Map<String, String>? = null): List<Trade> {
+        if (useCache) {
+            return when {
+                orderId != null -> todayTrades.filter { it.orderId == orderId }
+                code != null -> todayTrades.filter { it.code == code }
+                else -> todayTrades.toList()
+            }
+        } else {
+            val reqData = QueryTradesData()
+            val qryField = CThostFtdcQryTradeField().apply {
+                brokerID = config.brokerId
+                investorID = config.investorId
+                if (code != null) {
+                    val (excId, insId) = parseCode(code)
+                    exchangeID = excId
+                    instrumentID = insId
+                    reqData.code = code
+                }
+                if (orderId != null) {
+                    val order = todayOrders[orderId.split("_").last()] ?: todayOrders[orderId] ?: return listOf()
+                    val (excId, insId) = parseCode(order.code)
+                    exchangeID = excId
+                    instrumentID = insId
+                    reqData.orderSysId = order.orderSysId
                 }
             }
-            // 如果是中金所股指期货，计算申报手续费
-            if (order.code.startsWith(ExchangeID.CFFEX) && instrument.type == SecurityType.FUTURES) {
-                val com = getOrQueryCommissionRate(instrument)
-                if (com != null) {
-                    when (order.status) {
-                        OrderStatus.ACCEPTED,
-                        OrderStatus.PARTIALLY_FILLED,
-                        OrderStatus.FILLED -> {
-                            if (!order.insertFeeCalculated) {
-                                order.commission += com.orderInsertFeeByTrade + com.orderInsertFeeByVolume * order.volume
-                                order.insertFeeCalculated = true
-                            }
-                        }
-                        OrderStatus.CANCELED -> {
-                            if (!order.cancelFeeCalculated) {
-                                order.commission += com.orderCancelFeeByTrade + com.orderCancelFeeByVolume * order.volume
-                                order.cancelFeeCalculated = true
-                            }
-                        }
-                        else -> Unit
-                    }
+            val requestId = nextRequestId()
+            return runWithResultCheck<List<Trade>>({ tdApi.ReqQryTrade(qryField, requestId) }, {
+                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
+                    requestMap[requestId] = RequestContinuation(requestId, continuation, data = reqData)
                 }
+            }).onEach {
+                ensureFullSecurityInfo(it.code)
+                getOrQueryTick(it.code).first?.calculateTrade(it)
             }
         }
     }
 
     /**
-     * 计算 Trade 的 turnover 与 commission，如果是平仓会依据 [Trade.offset] 判断是否按平今计算手续费
+     * 查询账户资金信息
      */
-    fun calculateTrade(trade: Trade, extras: Map<String, String>? = null) {
-        val instrument = instruments[trade.code] ?: return
-        when (instrument.type) {
-            SecurityType.FUTURES,
-            SecurityType.OPTIONS, -> {
-                if (trade.turnover == 0.0) {
-                    trade.turnover = trade.volume * trade.price * instrument.volumeMultiple
+    suspend fun queryAssets(useCache: Boolean = true, extras: Map<String, String>? = null): Assets {
+        // 10 秒内，使用上次查询结果
+        if (useCache && System.currentTimeMillis() - lastQueryAssetsTime < 10000) {
+            return assets.deepCopy()
+        }
+        val qryField = CThostFtdcQryTradingAccountField().apply {
+            brokerID = config.brokerId
+            investorID = config.investorId
+            currencyID = "CNY"
+        }
+        val requestId = nextRequestId()
+        val rawAssets = runWithResultCheck<Assets>({ tdApi.ReqQryTradingAccount(qryField, requestId) }, {
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
+                requestMap[requestId] = RequestContinuation(requestId, continuation)
+            }
+        })
+        assets = rawAssets
+        lastQueryAssetsTime = System.currentTimeMillis()
+        // 计算持仓盈亏
+        assets.positionPnl = 0.0
+        positions.forEach { (code, bi) ->
+            ensureFullSecurityInfo(code)
+            val lastTick = getOrQueryTick(code).first
+            if (lastTick != null) {
+                bi.long?.let {
+                    lastTick.calculatePosition(it, calculateValue = false)
+                    assets.positionPnl += it.pnl()
                 }
-                if (trade.commission == 0.0) {
-                    val com = getOrQueryCommissionRate(instrument)
-                    if (com != null) {
-                        when (trade.offset) {
-                            OrderOffset.OPEN -> {
-                                trade.commission = trade.turnover * com.openRatioByMoney + trade.volume * com.openRatioByVolume
-                            }
-                            OrderOffset.CLOSE,
-                            OrderOffset.CLOSE_YESTERDAY -> {
-                                trade.commission = trade.turnover * com.closeRatioByMoney + trade.volume * com.closeRatioByVolume
-                            }
-                            OrderOffset.CLOSE_TODAY -> {
-                                trade.commission = trade.turnover * com.closeTodayRatioByMoney + trade.volume * com.closeTodayRatioByVolume
-                            }
-                            else -> postBrokerLogEvent(LogLevel.WARNING, "【CtpTdApi.calculateTrade】订单开平仓类型未知（${trade.code}, ${trade.offset}）")
-                        }
-                    }
+                bi.short?.let {
+                    lastTick.calculatePosition(it, calculateValue = false)
+                    assets.positionPnl += it.pnl()
                 }
             }
-            else -> return
         }
+        return assets.deepCopy()
+    }
+
+    /**
+     * 查询本地维护的持仓信息中合约 [code] 的持仓信息。如果 [isClose] 为 false（默认），返回其 [direction] 持仓，否则返回 [direction] 的反向持仓。如无持仓，返回 null
+     */
+    private fun queryCachedPosition(code: String, direction: Direction, isClose: Boolean = false): Position? {
+        if (direction == Direction.UNKNOWN) return null
+        val biPosition = positions[code] ?: return null
+        return when (direction) {
+            Direction.LONG -> if (isClose) biPosition.short else biPosition.long
+            Direction.SHORT -> if (isClose) biPosition.long else biPosition.short
+            else -> null
+        }
+    }
+
+    /**
+     * 查询合约 [code] 的 [direction] 方向的持仓信息
+     */
+    suspend fun queryPosition(code: String, direction: Direction, useCache: Boolean = true, extras: Map<String, String>? = null): Position? {
+        if (direction == Direction.UNKNOWN) return null
+        return if (useCache) {
+            queryCachedPosition(code, direction)?.deepCopy()
+        } else {
+            val qryField = CThostFtdcQryInvestorPositionField().apply {
+                instrumentID = parseCode(code).second
+            }
+            val requestId = nextRequestId()
+            runWithResultCheck({ tdApi.ReqQryInvestorPosition(qryField, requestId) }, {
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
+                    requestMap[requestId] = RequestContinuation(requestId, continuation, tag = direction.name, data = mutableListOf<Position>())
+                }
+            })
+        }
+    }
+
+    /**
+     * 查询持仓信息，如果 [code] 为 null（默认），则查询账户整体持仓信息
+     */
+    suspend fun queryPositions(code: String? = null, useCache: Boolean = true, extras: Map<String, String>? = null): List<Position> {
+        if (useCache) {
+            val positionList = mutableListOf<Position>()
+            // 查询全体持仓
+            if (code.isNullOrEmpty()) {
+                positions.forEach { (c, biPosition) ->
+                    ensureFullSecurityInfo(c)
+                    biPosition.long?.let { positionList.add(it) }
+                    biPosition.short?.let { positionList.add(it) }
+                }
+            } else { // 查询单合约持仓
+                positions[code]?.let { biPosition ->
+                    ensureFullSecurityInfo(code)
+                    biPosition.long?.let { positionList.add(it) }
+                    biPosition.short?.let { positionList.add(it) }
+                }
+            }
+            positionList.forEach {
+                val lastTick = getOrQueryTick(it.code).first
+                if (lastTick != null) {
+                    val marginPriceType = when (lastTick.info?.type) {
+                        SecurityType.FUTURES -> futuresMarginPriceType
+                        SecurityType.OPTIONS -> optionsMarginPriceType
+                        else -> MarginPriceType.PRE_SETTLEMENT_PRICE
+                    }
+                    lastTick.calculatePosition(it, marginPriceType, calculateValue = true)
+                }
+            }
+            return positionList.map { it.deepCopy() }
+        } else {
+            val qryField = CThostFtdcQryInvestorPositionField().apply {
+                if (!code.isNullOrEmpty()) instrumentID = parseCode(code).second
+            }
+            val requestId = nextRequestId()
+            return runWithResultCheck<List<Position>>({ tdApi.ReqQryInvestorPosition(qryField, requestId) }, {
+                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
+                    requestMap[requestId] = RequestContinuation(requestId, continuation, tag = code ?: "", data = mutableListOf<Position>())
+                }
+            }).onEach {
+                val lastTick = getOrQueryTick(it.code).first
+                lastTick?.calculatePosition(it, calculateValue = false)
+            }
+        }
+    }
+
+    /**
+     * 查询合约 [code] 的 [direction] 方向的持仓明细
+     */
+    suspend fun queryPositionDetails(code: String, direction: Direction, useCache: Boolean, extras: Map<String, String>?): PositionDetails? {
+        val qryField = CThostFtdcQryInvestorPositionDetailField().apply {
+            brokerID = config.brokerId
+            investorID = config.investorId
+            instrumentID = parseCode(code).second
+        }
+        val requestId = nextRequestId()
+        return runWithResultCheck({ tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }, {
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
+                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code, direction))
+            }
+        })
+    }
+
+    /**
+     * 查询持仓明细，如果 [code] 为 null（默认），则查询账户整体持仓明细
+     */
+    suspend fun queryPositionDetails(code: String?, useCache: Boolean, extras: Map<String, String>?): List<PositionDetails> {
+        val qryField = CThostFtdcQryInvestorPositionDetailField().apply {
+            brokerID = config.brokerId
+            investorID = config.investorId
+        }
+        val requestId = nextRequestId()
+        return runWithResultCheck({ tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }, {
+            suspendCoroutineWithTimeout(config.timeout) { continuation ->
+                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code))
+            }
+        })
     }
 
     /**
@@ -1284,9 +1139,10 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     private inner class CtpTdSpi : CThostFtdcTraderSpi() {
 
         /**
-         * 请求客户端认证
+         * 请求客户端认证。由于可能是交易日结束后断线自动重连，此时经纪商服务器刚启动，响应时间较长，
+         * 容易因请求超时而自动重连失败，因此设置了 [timeout] 参数用于在这种情况下延长超时时间（单位：ms）
          */
-        private suspend fun reqAuthenticate() {
+        private suspend fun reqAuthenticate(timeout: Long = config.timeout) {
             val reqField = CThostFtdcReqAuthenticateField().apply {
                 appID = config.appId
                 authCode = config.authCode
@@ -1296,7 +1152,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             val requestId = nextRequestId()
             runWithResultCheck<Unit>({ tdApi.ReqAuthenticate(reqField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
+                suspendCoroutineWithTimeout(timeout) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation)
                 }
             })
@@ -1391,18 +1247,23 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             requestId.set(0)
             postBrokerConnectionEvent(ConnectionEventType.TD_NET_CONNECTED)
             scope.launch {
-                fun resumeConnectWithException(errorInfo: String) {
+                fun resumeConnectWithException(errorInfo: String, e: Exception) {
+                    e.printStackTrace()
+                    postBrokerLogEvent(LogLevel.ERROR, errorInfo)
                     resumeRequestsWithException("connect", errorInfo)
-                    throw Exception(errorInfo)
                 }
                 try {
                     // 请求客户端认证
                     postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证...")
                     try {
-                        reqAuthenticate()
+                        if (hasRequest("connect")) {
+                            reqAuthenticate()
+                        } else {
+                            reqAuthenticate(60000)
+                        }
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证成功")
                     } catch (e: Exception) {
-                        resumeConnectWithException("请求客户端认证失败：$e")
+                        resumeConnectWithException("【交易接口登录】请求客户端认证失败：$e", e)
                     }
                     // 请求用户登录
                     postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】资金账户登录...")
@@ -1410,7 +1271,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         reqUserLogin()
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】资金账户登录成功")
                     } catch (e: Exception) {
-                        resumeConnectWithException("请求用户登录失败：$e")
+                        resumeConnectWithException("【交易接口登录】请求用户登录失败：$e", e)
                     }
                     // 请求结算单确认
                     postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】结算单确认...")
@@ -1418,12 +1279,12 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         reqSettlementInfoConfirm()
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】结算单确认成功")
                     } catch (e: Exception) {
-                        resumeConnectWithException("请求结算单确认失败：$e")
+                        resumeConnectWithException("【交易接口登录】请求结算单确认失败：$e", e)
                     }
                     // 查询全市场合约
                     postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约...")
                     runWithRetry({
-                        val allInstruments = queryAllInstruments(false, null)
+                        val allInstruments = queryAllSecurities(false, null)
                         allInstruments.forEach {
                             instruments[it.code] = it
                             codeProductMap[it.code] = it.productId
@@ -1431,26 +1292,27 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         }
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约成功")
                     }) { e ->
-                        resumeConnectWithException("查询全市场合约失败：$e")
+                        resumeConnectWithException("【交易接口登录】查询全市场合约失败：$e", e)
                     }
                     // 查询保证金价格类型、持仓合约的保证金率及手续费率（如果未禁止费用计算）
-                    if (!config.disableFeeCalculation) {
-                        // 查询保证金价格类型
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型...")
-                        runWithRetry({
-                            queryMarginPriceType()
-                            postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型成功")
-                        }) { e ->
-                            resumeConnectWithException("查询保证金价格类型失败：$e")
-                        }
-                        // 查询持仓合约的手续费率及保证金率
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率...")
-                        try {
-                            prepareFeeCalculation()
-                            postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
-                        } catch (e: Exception) {
-                            resumeConnectWithException("查询持仓合约手续费率及保证金率失败：$e")
-                        }
+                    // 查询保证金价格类型
+                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型...")
+                    runWithRetry({
+                        queryMarginPriceType()
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型成功")
+                    }) { e ->
+                        resumeConnectWithException("【交易接口登录】查询保证金价格类型失败：$e", e)
+                    }
+                    // 查询持仓合约的手续费率及保证金率
+                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率...")
+                    try {
+                        runWithRetry({ queryFuturesCommissionRate() })
+                        runWithRetry({ queryFuturesMarginRate() })
+                        runWithRetry({ queryOptionsCommissionRate() })
+                        runWithRetry({ queryOptionsMargin() })
+                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
+                    } catch (e: Exception) {
+                        resumeConnectWithException("【交易接口登录】查询持仓合约手续费率及保证金率失败：$e", e)
                     }
                     // 查询账户持仓
                     postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓...")
@@ -1458,16 +1320,16 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         queryPositions(useCache = false)
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓成功")
                     }) { e ->
-                        resumeConnectWithException("查询账户持仓失败：$e")
+                        resumeConnectWithException("【交易接口登录】查询账户持仓失败：$e", e)
                     }
                     // 订阅持仓合约行情（如果行情可用且未禁止自动订阅）
-                    if (mdApi.connected && !config.disableAutoSubscribe) {
+                    if (mdApi.connected) {
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】订阅持仓合约行情...")
                         try {
                             mdApi.subscribeMarketData(positions.keys)
                             postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】订阅持仓合约行情成功")
                         } catch (e: Exception) {
-                            resumeConnectWithException("订阅持仓合约行情失败：$e")
+                            resumeConnectWithException("【交易接口登录】订阅持仓合约行情失败：$e", e)
                         }
                     }
                     // 查询当日订单
@@ -1490,7 +1352,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         }
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日订单成功")
                     }) { e ->
-                        resumeConnectWithException("查询当日订单失败：$e")
+                        resumeConnectWithException("【交易接口登录】查询当日订单失败：$e", e)
                     }
                     // 查询当日成交记录
                     postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录...")
@@ -1499,13 +1361,15 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         todayTrades.addAll(trades)
                         postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录成功")
                     }) { e ->
-                        resumeConnectWithException("查询当日成交记录失败：$e")
+                        resumeConnectWithException("【交易接口登录】查询当日成交记录失败：$e", e)
                     }
                     // 登录操作完成
                     connected = true
                     postBrokerConnectionEvent(ConnectionEventType.TD_LOGGED_IN)
                     resumeRequests("connect", Unit)
                 } catch (e: Exception) {  // 登录操作失败
+                    e.printStackTrace()
+                    postBrokerLogEvent(LogLevel.ERROR, "【交易接口登录】发生预期外的异常：$e")
                     resumeRequestsWithException("connect", e.message ?: e.toString())
                 }
             }
@@ -1585,6 +1449,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     unfinishedShortOrders.clear()
                     cancelStatistics.clear()
                     instruments.clear()
+                    marginRateQueriedCodes.clear()
+                    commissionRateQueriedCodes.clear()
+                    dayPriceInfoQueriedCodes.clear()
                     codeProductMap.clear()
                     cachedTickMap.clear()
                     mdApi.codeMap.clear()
@@ -1672,119 +1539,136 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
          * 订单状态更新回调。该回调会收到该账户下所有 session 的订单回报，因此需要与本 session 的订单区分处理
          */
         override fun OnRtnOrder(pOrder: CThostFtdcOrderField) {
-            val orderId = "${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"
-            var order = todayOrders[pOrder.orderRef]
-            // 如果不是本 session 发出的订单，找到或创建缓存的订单
-            if (order == null || orderId != order.orderId) {
-                // 首先检查是否已缓存过
-                order = todayOrders[orderId]
-                // 如果是第一次接收回报，则创建并缓存该订单，之后局部变量 order 不为 null
-                if (order == null) {
-                    val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
-                    order = Converter.orderC2A(tradingDate, pOrder, instruments[code]) { e ->
-                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
-                    }
-                    calculateOrder(order)
-                    todayOrders[orderId] = order
-                    when (order.status) {
-                        OrderStatus.SUBMITTING,
-                        OrderStatus.ACCEPTED,
-                        OrderStatus.PARTIALLY_FILLED -> insertUnfinishedOrder(order)
-                        else -> Unit
-                    }
-                }
-            }
-            // 更新 orderSysId
-            if (pOrder.orderSysID.isNotEmpty()) {
-                order.orderSysId = "${pOrder.exchangeID}_${pOrder.orderSysID}"
-            }
-            val oldStatus = order.status
-            val oldCommission = order.commission
-            // 判定订单目前的状态
-            val newOrderStatus = when (pOrder.orderSubmitStatus) {
-                THOST_FTDC_OSS_InsertRejected -> {
-                    removeUnfinishedOrder(order)
-                    OrderStatus.ERROR
-                }
-                THOST_FTDC_OSS_CancelRejected,
-                THOST_FTDC_OSS_ModifyRejected -> {
-                    order.status
-                }
-                else -> when (pOrder.orderStatus) {
-                    THOST_FTDC_OST_Unknown -> OrderStatus.SUBMITTING
-                    THOST_FTDC_OST_NoTradeQueueing -> {
-                        // 计算报单费用
-                        if (pOrder.exchangeID == ExchangeID.CFFEX) calculateOrder(order)
-                        OrderStatus.ACCEPTED
-                    }
-                    THOST_FTDC_OST_PartTradedQueueing -> OrderStatus.PARTIALLY_FILLED
-                    THOST_FTDC_OST_AllTraded -> {
-                        removeUnfinishedOrder(order)
-                        OrderStatus.FILLED
-                    }
-                    THOST_FTDC_OST_Canceled -> {
-                        removeUnfinishedOrder(order)
-                        cancelStatistics[order.code] = cancelStatistics.getOrDefault(order.code, 0) + 1
-                        // 计算撤单费用
-                        if (pOrder.exchangeID == ExchangeID.CFFEX) calculateOrder(order)
-                        OrderStatus.CANCELED
-                    }
-                    else -> {
-                        removeUnfinishedOrder(order)
-                        OrderStatus.ERROR
-                    }
-                }
-            }
-            order.apply {
-                status = newOrderStatus
-                statusMsg = pOrder.statusMsg
-            }
-            // 如果有申报手续费，加到 position 的手续费统计中
-            if (oldCommission != order.commission) {
-                val position = queryCachedPosition(order.code, order.direction, order.offset != OrderOffset.OPEN)
-                position?.apply {
-                    todayCommission += order.commission - oldCommission
-                }
-            }
-            // 仅发送与成交不相关的订单状态更新回报，成交相关的订单状态更新回报会在 OnRtnTrade 中发出，以确保成交回报先于状态回报
-            if (newOrderStatus != OrderStatus.PARTIALLY_FILLED && newOrderStatus != OrderStatus.FILLED) {
-                // 如果是平仓，更新仓位冻结及剩余可平信息
-                if (order.offset != OrderOffset.OPEN) {
-                    val position = queryCachedPosition(order.code, order.direction, true)
-                    if (position != null) {
-                        when (newOrderStatus) {
-                            OrderStatus.ACCEPTED -> {
-                                position.frozenVolume += order.volume
-                            }
-                            OrderStatus.CANCELED,
-                            OrderStatus.ERROR -> {
-                                if (oldStatus != OrderStatus.ERROR && oldStatus != OrderStatus.CANCELED) {
-                                    val restVolume = order.volume - pOrder.volumeTraded
-                                    position.frozenVolume -= restVolume
-                                }
-                            }
+            scope.launch {
+                val orderId = "${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"
+                var order = todayOrders[pOrder.orderRef]
+                // 如果不是本 session 发出的订单，找到或创建缓存的订单
+                if (order == null || orderId != order.orderId) {
+                    // 首先检查是否已缓存过
+                    order = todayOrders[orderId]
+                    // 如果是第一次接收回报，则创建并缓存该订单，之后局部变量 order 不为 null
+                    if (order == null) {
+                        val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
+                        order = Converter.orderC2A(tradingDate, pOrder, instruments[code]) { e ->
+                            postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                        }
+                        ensureFullSecurityInfo(code)
+                        getOrQueryTick(code).first?.calculateOrderFrozenCash(order)
+                        todayOrders[orderId] = order
+                        when (order.status) {
+                            OrderStatus.SUBMITTING,
+                            OrderStatus.ACCEPTED,
+                            OrderStatus.PARTIALLY_FILLED -> insertUnfinishedOrder(order)
                             else -> Unit
                         }
                     }
                 }
-                if (newOrderStatus == OrderStatus.ERROR) {
-                    order.updateTime = LocalDateTime.now()
-                } else {
-                    val updateTime = try {
-                        if (newOrderStatus == OrderStatus.CANCELED) {
-                            LocalTime.parse(pOrder.cancelTime).atDate(LocalDate.now())
-                        } else {
-                            val date = pOrder.insertDate
-                            LocalDateTime.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${pOrder.insertTime}")
-                        }
-                    } catch (e: Exception) {
-                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
-                        LocalDateTime.now()
-                    }
-                    order.updateTime = updateTime
+                // 更新 orderSysId
+                if (pOrder.orderSysID.isNotEmpty()) {
+                    order.orderSysId = "${pOrder.exchangeID}_${pOrder.orderSysID}"
                 }
-                if (oldStatus != newOrderStatus || newOrderStatus == OrderStatus.ERROR) {
-                    postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
+                val oldStatus = order.status
+                val oldCommission = order.commission
+                // 判定订单目前的状态
+                val newOrderStatus = when (pOrder.orderSubmitStatus) {
+                    THOST_FTDC_OSS_InsertRejected -> {
+                        removeUnfinishedOrder(order)
+                        OrderStatus.ERROR
+                    }
+                    THOST_FTDC_OSS_CancelRejected,
+                    THOST_FTDC_OSS_ModifyRejected -> {
+                        order.status
+                    }
+                    else -> when (pOrder.orderStatus) {
+                        THOST_FTDC_OST_Unknown -> OrderStatus.SUBMITTING
+                        THOST_FTDC_OST_NoTradeQueueing -> OrderStatus.ACCEPTED
+                        THOST_FTDC_OST_PartTradedQueueing -> OrderStatus.PARTIALLY_FILLED
+                        THOST_FTDC_OST_AllTraded -> {
+                            removeUnfinishedOrder(order)
+                            OrderStatus.FILLED
+                        }
+                        THOST_FTDC_OST_Canceled -> {
+                            removeUnfinishedOrder(order)
+                            cancelStatistics[order.code] = cancelStatistics.getOrDefault(order.code, 0) + 1
+                            OrderStatus.CANCELED
+                        }
+                        else -> {
+                            removeUnfinishedOrder(order)
+                            OrderStatus.ERROR
+                        }
+                    }
+                }
+                order.apply {
+                    status = newOrderStatus
+                    statusMsg = pOrder.statusMsg
+                    // 如果是中金所，那么计算报单/撤单手续费
+                    if (pOrder.exchangeID == ExchangeID.CFFEX && instruments[code]?.type == SecurityType.FUTURES) {
+                        when (status) {
+                            OrderStatus.ACCEPTED,
+                            OrderStatus.PARTIALLY_FILLED,
+                            OrderStatus.FILLED -> {
+                                if (!insertFeeCalculated) {
+                                    commission += volume
+                                    insertFeeCalculated = true
+                                }
+                            }
+                            OrderStatus.CANCELED -> {
+                                if (!cancelFeeCalculated) {
+                                    commission += volume
+                                    cancelFeeCalculated = true
+                                }
+                            }
+                            else -> Unit
+                        }
+                        // 如果有申报手续费，加到 position 的手续费统计中
+                        if (oldCommission != commission) {
+                            val position = queryCachedPosition(order.code, order.direction, order.offset != OrderOffset.OPEN)
+                            position?.apply {
+                                todayCommission += commission - oldCommission
+                            }
+                        }
+                    }
+                }
+                // 仅发送与成交不相关的订单状态更新回报，成交相关的订单状态更新回报会在 OnRtnTrade 中发出，以确保成交回报先于状态回报
+                if (newOrderStatus != OrderStatus.PARTIALLY_FILLED && newOrderStatus != OrderStatus.FILLED) {
+                    // 如果是平仓，更新仓位冻结及剩余可平信息
+                    if (order.offset != OrderOffset.OPEN) {
+                        val position = queryCachedPosition(order.code, order.direction, true)
+                        if (position != null) {
+                            when (newOrderStatus) {
+                                OrderStatus.ACCEPTED -> {
+                                    position.frozenVolume += order.volume
+                                }
+                                OrderStatus.CANCELED,
+                                OrderStatus.ERROR -> {
+                                    if (oldStatus != OrderStatus.ERROR && oldStatus != OrderStatus.CANCELED) {
+                                        val restVolume = order.volume - pOrder.volumeTraded
+                                        position.frozenVolume -= restVolume
+                                    }
+                                }
+                                else -> Unit
+                            }
+                        }
+                    }
+                    if (newOrderStatus == OrderStatus.ERROR) {
+                        order.updateTime = LocalDateTime.now()
+                    } else {
+                        val updateTime = try {
+                            if (newOrderStatus == OrderStatus.CANCELED) {
+                                LocalTime.parse(pOrder.cancelTime).atDate(LocalDate.now())
+                            } else {
+                                val date = pOrder.insertDate
+                                LocalDateTime.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${pOrder.insertTime}")
+                            }
+                        } catch (e: Exception) {
+                            postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                            LocalDateTime.now()
+                        }
+                        order.updateTime = updateTime
+                    }
+                    if (oldStatus != newOrderStatus || newOrderStatus == OrderStatus.ERROR) {
+                        postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
+                    }
                 }
             }
         }
@@ -1793,155 +1677,162 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
          * 成交回报回调。该回调会收到该账户下所有 session 的成交回报，因此需要与本 session 的成交回报区分处理
          */
         override fun OnRtnTrade(pTrade: CThostFtdcTradeField) {
-            var order = todayOrders[pTrade.orderRef]
-            val orderSysId = "${pTrade.exchangeID}_${pTrade.orderSysID}"
-            if (order == null || order.orderSysId != orderSysId) {
-                order = todayOrders.values.find { it.orderSysId == orderSysId }
-                if (order == null) {
-                    postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知订单的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
-                }
-            }
-            val code = "${pTrade.exchangeID}.${pTrade.instrumentID}"
-            val instrument = instruments[code] ?: return
-            val trade = Converter.tradeC2A(tradingDate, pTrade, order?.orderId ?: orderSysId, instrument.name) { e ->
-                postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
-            }
-            trade.turnover = trade.volume * trade.price * instrument.volumeMultiple
-            // 更新仓位信息，并判断是平今还是平昨
-            val biPosition = positions.getOrPut(trade.code) { BiPosition() }
-            val position: Position? = when {
-                trade.direction == Direction.LONG && trade.offset == OrderOffset.OPEN ||
-                        trade.direction == Direction.SHORT && trade.offset != OrderOffset.OPEN -> {
-                    if (biPosition.long == null) {
-                        biPosition.long = Position(
-                            config.investorId, tradingDate,
-                            trade.code, instrument.name, instrument.type, instrument.volumeMultiple, instrument.priceTick,
-                            Direction.LONG, 0, 0, 0, 0, 0, 0,
-                            0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-                        )
+            scope.launch {
+                var order = todayOrders[pTrade.orderRef]
+                val orderSysId = "${pTrade.exchangeID}_${pTrade.orderSysID}"
+                if (order == null || order.orderSysId != orderSysId) {
+                    order = todayOrders.values.find { it.orderSysId == orderSysId }
+                    if (order == null) {
+                        postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知订单的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                     }
-                    biPosition.long
                 }
-                trade.direction == Direction.SHORT && trade.offset == OrderOffset.OPEN ||
-                        trade.direction == Direction.LONG && trade.offset != OrderOffset.OPEN -> {
-                    if (biPosition.short == null) {
-                        biPosition.short = Position(
-                            config.investorId, tradingDate,
-                            trade.code, instrument.name, instrument.type, instrument.volumeMultiple, instrument.priceTick,
-                            Direction.SHORT, 0, 0, 0,  0, 0, 0,
-                            0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-                        )
-                    }
-                    biPosition.short
+                val code = "${pTrade.exchangeID}.${pTrade.instrumentID}"
+                ensureFullSecurityInfo(code)
+                val lastTick = getOrQueryTick(code).first
+                val info = lastTick?.info ?: return@launch
+                val trade = Converter.tradeC2A(tradingDate, pTrade, order?.orderId ?: orderSysId, info.name) { e ->
+                    postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
                 }
-                else -> null
-            }
-            if (position != null) {
-                // 如果是开仓，那么很简单，直接更新仓位
-                if (trade.offset == OrderOffset.OPEN) {
-                    position.todayVolume += trade.volume
-                    position.volume += trade.volume
-                    position.todayOpenVolume += trade.volume
-                    position.openCost += trade.turnover
-                } else { // 如果不是开仓，则判断是平今还是平昨，上期所按 order 指令，其它三所涉及平今手续费减免时优先平今，否则优先平昨
-                    var todayClosed = 0
-                    var yesterdayClosed = 0
-                    val com = getOrQueryCommissionRate(instrument)
-                    when (pTrade.exchangeID) {
-                        ExchangeID.SHFE, ExchangeID.INE -> {
-                            trade.offset = order?.offset ?: trade.offset
-                            if (trade.offset == OrderOffset.CLOSE) {
-                                trade.offset = OrderOffset.CLOSE_YESTERDAY
-                            }
-                            when (trade.offset) {
-                                OrderOffset.CLOSE_TODAY -> todayClosed = trade.volume
-                                OrderOffset.CLOSE_YESTERDAY -> yesterdayClosed = trade.volume
-                                else -> Unit
+                trade.turnover = trade.volume * trade.price * info.volumeMultiple
+                // 更新仓位信息，并判断是平今还是平昨
+                val biPosition = positions.getOrPut(trade.code) { BiPosition() }
+                val position: Position? = when {
+                    trade.direction == Direction.LONG && trade.offset == OrderOffset.OPEN ||
+                            trade.direction == Direction.SHORT && trade.offset != OrderOffset.OPEN -> {
+                        if (biPosition.long == null) {
+                            biPosition.long = Position(
+                                config.investorId, tradingDate,
+                                trade.code, Direction.LONG, 0, 0, 0, 0,
+                                0, 0,0, 0.0, 0.0
+                            ).apply {
+                                ensureFullSecurityInfo(code)
+                                info.copyFieldsToPosition(this)
                             }
                         }
-                        else -> {
-                            // 依据手续费率判断是否优先平今
-                            var todayFirst = false
-                            if (com != null && (com.closeTodayRatioByVolume < com.closeRatioByVolume || com.closeTodayRatioByMoney < com.closeRatioByMoney)) {
-                                todayFirst = true
+                        biPosition.long
+                    }
+                    trade.direction == Direction.SHORT && trade.offset == OrderOffset.OPEN ||
+                            trade.direction == Direction.LONG && trade.offset != OrderOffset.OPEN -> {
+                        if (biPosition.short == null) {
+                            biPosition.short = Position(
+                                config.investorId, tradingDate,
+                                trade.code, Direction.SHORT, 0, 0, 0, 0,
+                                0, 0, 0, 0.0, 0.0
+                            ).apply {
+                                ensureFullSecurityInfo(code)
+                                info.copyFieldsToPosition(this)
                             }
-                            // 依据仓位及是否优先平今判断是否实际平今
-                            if (todayFirst) {
-                                when {
-                                    // 全部平今
-                                    trade.volume <= position.todayVolume -> {
-                                        trade.offset = OrderOffset.CLOSE_TODAY
-                                        todayClosed = trade.volume
-                                    }
-                                    // 全部平昨
-                                    position.todayVolume == 0 && position.yesterdayVolume >= trade.volume -> {
-                                        trade.offset = OrderOffset.CLOSE_YESTERDAY
-                                        yesterdayClosed = trade.volume
-                                    }
-                                    // 部分平今部分平昨
-                                    trade.volume <= position.volume -> {
-                                        trade.offset = OrderOffset.CLOSE
-                                        todayClosed = position.todayVolume
-                                        yesterdayClosed = trade.volume - position.todayVolume
-                                    }
+                        }
+                        biPosition.short
+                    }
+                    else -> null
+                }
+                if (position != null) {
+                    // 如果是开仓，那么很简单，直接更新仓位
+                    if (trade.offset == OrderOffset.OPEN) {
+                        position.todayVolume += trade.volume
+                        position.volume += trade.volume
+                        position.todayOpenVolume += trade.volume
+                        position.openCost += trade.turnover
+                    } else { // 如果不是开仓，则判断是平今还是平昨，上期所按 order 指令，其它三所涉及平今手续费减免时优先平今，否则优先平昨
+                        var todayClosed = 0
+                        var yesterdayClosed = 0
+                        when (pTrade.exchangeID) {
+                            ExchangeID.SHFE, ExchangeID.INE -> {
+                                trade.offset = order?.offset ?: trade.offset
+                                if (trade.offset == OrderOffset.CLOSE) {
+                                    trade.offset = OrderOffset.CLOSE_YESTERDAY
                                 }
-                            } else {
-                                when {
-                                    // 全部平昨
-                                    trade.volume <= position.yesterdayVolume -> {
-                                        trade.offset = OrderOffset.CLOSE_YESTERDAY
-                                        yesterdayClosed = trade.volume
+                                when (trade.offset) {
+                                    OrderOffset.CLOSE_TODAY -> todayClosed = trade.volume
+                                    OrderOffset.CLOSE_YESTERDAY -> yesterdayClosed = trade.volume
+                                    else -> Unit
+                                }
+                            }
+                            else -> {
+                                // 依据手续费率判断是否优先平今
+                                val todayFirst = info.closeTodayCommissionRate < info.closeCommissionRate
+                                // 依据仓位及是否优先平今判断是否实际平今
+                                val yesterdayVolume = position.yesterdayVolume()
+                                if (todayFirst) {
+                                    when {
+                                        // 全部平今
+                                        trade.volume <= position.todayVolume -> {
+                                            trade.offset = OrderOffset.CLOSE_TODAY
+                                            todayClosed = trade.volume
+                                        }
+                                        // 全部平昨
+                                        position.todayVolume == 0 && yesterdayVolume >= trade.volume -> {
+                                            trade.offset = OrderOffset.CLOSE_YESTERDAY
+                                            yesterdayClosed = trade.volume
+                                        }
+                                        // 部分平今部分平昨
+                                        trade.volume <= position.volume -> {
+                                            trade.offset = OrderOffset.CLOSE
+                                            todayClosed = position.todayVolume
+                                            yesterdayClosed = trade.volume - position.todayVolume
+                                        }
                                     }
-                                    // 全部平今
-                                    position.yesterdayVolume == 0 && trade.volume <= position.todayVolume -> {
-                                        trade.offset = OrderOffset.CLOSE_TODAY
-                                        todayClosed = trade.volume
-                                    }
-                                    // 部分平今部分平昨
-                                    trade.volume <= position.volume -> {
-                                        trade.offset = OrderOffset.CLOSE
-                                        yesterdayClosed = position.yesterdayVolume
-                                        todayClosed = trade.volume - yesterdayClosed
+                                } else {
+                                    when {
+                                        // 全部平昨
+                                        trade.volume <= yesterdayVolume -> {
+                                            trade.offset = OrderOffset.CLOSE_YESTERDAY
+                                            yesterdayClosed = trade.volume
+                                        }
+                                        // 全部平今
+                                        yesterdayVolume == 0 && trade.volume <= position.todayVolume -> {
+                                            trade.offset = OrderOffset.CLOSE_TODAY
+                                            todayClosed = trade.volume
+                                        }
+                                        // 部分平今部分平昨
+                                        trade.volume <= position.volume -> {
+                                            trade.offset = OrderOffset.CLOSE
+                                            yesterdayClosed = yesterdayVolume
+                                            todayClosed = trade.volume - yesterdayClosed
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                    val totalClosed = todayClosed + yesterdayClosed
-                    position.volume -= totalClosed
-                    position.todayVolume -= todayClosed
-                    position.todayCloseVolume += totalClosed
-                    position.frozenVolume -= totalClosed
-                    // 由于未知持仓明细，因此此处只按开仓均价减去对应开仓成本，保持开仓均价不变，为此查询持仓明细太麻烦了
-                    position.openCost -= position.avgOpenPrice * totalClosed * instrument.volumeMultiple
-                    // 部分平今部分平昨，则本地计算手续费
-                    if (trade.offset == OrderOffset.CLOSE && com !=null) {
-                        val todayClosedTurnover = todayClosed * trade.turnover / totalClosed
-                        val yesterdayClosedTurnover = yesterdayClosed * trade.turnover / totalClosed
-                        trade.commission = yesterdayClosedTurnover * com.closeRatioByMoney + yesterdayClosed * com.closeRatioByVolume +
-                                todayClosedTurnover * com.closeTodayRatioByMoney + todayClosed * com.closeTodayRatioByVolume
+                        val totalClosed = todayClosed + yesterdayClosed
+                        position.volume -= totalClosed
+                        position.todayVolume -= todayClosed
+                        position.todayCloseVolume += totalClosed
+                        position.frozenVolume -= totalClosed
+                        // 由于未知持仓明细，因此此处只按开仓均价减去对应开仓成本，保持开仓均价不变，为此查询持仓明细太麻烦了
+                        position.openCost -= position.avgOpenPrice() * totalClosed * info.volumeMultiple
+                        // 部分平今部分平昨，则本地计算手续费
+                        if (trade.offset == OrderOffset.CLOSE) {
+                            val todayClosedTurnover = todayClosed * trade.turnover / totalClosed
+                            val yesterdayClosedTurnover = yesterdayClosed * trade.turnover / totalClosed
+                            trade.commission = lastTick.calculateCommission(OrderOffset.CLOSE_TODAY, todayClosedTurnover, todayClosed) +
+                                    lastTick.calculateCommission(OrderOffset.CLOSE_YESTERDAY, yesterdayClosedTurnover, yesterdayClosed)
+                        }
                     }
                 }
-            }
-            calculateTrade(trade)
-            if (position != null) {
-                position.todayCommission += trade.commission
-            }
-            todayTrades.add(trade)
-            postBrokerEvent(BrokerEventType.TRADE_REPORT, trade.deepCopy())
-            // 更新 order 信息
-            if (order != null) {
-                order.filledVolume += trade.volume
-                order.turnover += trade.turnover
-                order.commission += trade.commission
-                order.updateTime = trade.time
-                order.status = if (order.filledVolume < order.volume) {
-                    OrderStatus.PARTIALLY_FILLED
-                } else {
-                    OrderStatus.FILLED
+                if (trade.commission == 0.0) {
+                    lastTick.calculateTrade(trade)
                 }
-                calculateOrder(order)
-                postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
+                if (position != null) {
+                    position.todayCommission += trade.commission
+                }
+                todayTrades.add(trade)
+                postBrokerEvent(BrokerEventType.TRADE_REPORT, trade.deepCopy())
+                // 更新 order 信息
+                if (order != null) {
+                    order.filledVolume += trade.volume
+                    order.turnover += trade.turnover
+                    order.commission += trade.commission
+                    order.updateTime = trade.time
+                    order.status = if (order.filledVolume < order.volume) {
+                        OrderStatus.PARTIALLY_FILLED
+                    } else {
+                        OrderStatus.FILLED
+                    }
+                    lastTick.calculateOrderFrozenCash(order)
+                    postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
+                }
             }
         }
 
@@ -2055,7 +1946,16 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 val code = "${pDepthMarketData.exchangeID}.${pDepthMarketData.instrumentID}"
                 if (code == reqCode) {
-                    val tick = Converter.tickC2A(Converter.dateC2A(pDepthMarketData.tradingDay), code, pDepthMarketData, info = instruments[code], marketStatus = getInstrumentStatus(code)) { e ->
+                    val info = instruments[code]
+                    if (info != null && info.todayHighLimitPrice == 0.0) {
+                        info.preClosePrice = Converter.formatDouble(pDepthMarketData.preClosePrice)
+                        info.preSettlementPrice = Converter.formatDouble(pDepthMarketData.preSettlementPrice)
+                        info.preOpenInterest = pDepthMarketData.preOpenInterest.toInt()
+                        info.todayHighLimitPrice = Converter.formatDouble(pDepthMarketData.upperLimitPrice)
+                        info.todayLowLimitPrice = Converter.formatDouble(pDepthMarketData.lowerLimitPrice)
+                        dayPriceInfoQueriedCodes.add(code)
+                    }
+                    val tick = Converter.tickC2A(code, Converter.dateC2A(pDepthMarketData.tradingDay), pDepthMarketData, info = info, marketStatus = getInstrumentStatus(code)) { e ->
                         postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryDepthMarketData】Tick updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
                     }
                     cachedTickMap[code] = tick
@@ -2085,7 +1985,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             val request = requestMap[nRequestID] ?: return
             val reqData = request.data
             val instrument = pInstrument?.let {
-                Converter.securityC2A(pInstrument) { e ->
+                Converter.securityC2A(tradingDate, pInstrument) { e ->
                     postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryInstrument】Instrument 解析失败(${pInstrument.exchangeID}.${pInstrument.instrumentID})：$e")
                 }
             }
@@ -2137,7 +2037,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     requestMap.remove(nRequestID)
                     return
                 }
-                (request.continuation as Continuation<Assets>).resume(Converter.assetsC2A(tradingDate, pTradingAccount))
+                (request.continuation as Continuation<Assets>).resume(Converter.assetsC2A(tradingDate, pTradingAccount, futuresMarginPriceType, optionsMarginPriceType))
                 requestMap.remove(nRequestID)
             }, { errorCode, errorMsg ->
                 request.continuation.resumeWithException(Exception("$errorMsg ($errorCode)"))
@@ -2189,8 +2089,6 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     }
                 }
                 if (bIsLast) {
-                    // 不计算保证金，只计算 avgOpenPrice, lastPrice, pnl
-                    posList.forEach { calculatePosition(it, false) }
                     // 如果是查询总持仓，更新持仓缓存
                     if (request.tag == "") {
                         positions.clear()
@@ -2326,8 +2224,10 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     val code = mdApi.codeMap[pMarginRate.instrumentID]
                     if (code != null) {
                         val instrument = instruments[code]
-                        if (instrument != null && instrument.marginRate == null) {
-                            instrument.marginRate = Converter.futuresMarginRateC2A(pMarginRate, code)
+                        if (instrument != null) {
+                            val marginRate = Converter.futuresMarginRateC2A(pMarginRate, code)
+                            marginRate.copyFieldsToSecurityInfo(instrument)
+                            marginRateQueriedCodes.add(code)
                         }
                     }
                 }
@@ -2357,33 +2257,34 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     val code = mdApi.codeMap[pCommissionRate.instrumentID] ?: pCommissionRate.instrumentID
                     val commissionRate = Converter.futuresCommissionRateC2A(pCommissionRate, code)
                     val instrument = instruments[code]
-                    var standardCode = ""
+//                    var standardCode = ""
                     // 如果是品种代码，更新 instruments 中所有该品种的手续费
                     if (instrument == null) {
                         val instrumentList = instruments.values.filter {
                             if (it.type != SecurityType.FUTURES) return@filter false
-                            if (it.commissionRate != null) return@filter false
                             return@filter it.productId == code
                         }
                         if (instrumentList.isNotEmpty()) {
-                            instrumentList.forEach { it.commissionRate = commissionRate }
-                            standardCode = instrumentList.first().code
+                            instrumentList.forEach {
+                                commissionRate.copyFieldsToSecurityInfo(it)
+                                commissionRateQueriedCodes.add(it.code)
+                            }
+//                            standardCode = instrumentList.first().code
                         }
                     } else { // 如果是合约代码，直接更新合约
-                        if (instrument.commissionRate == null) {
-                            instrument.commissionRate = commissionRate
-                            standardCode = instrument.code
-                        }
+                        commissionRate.copyFieldsToSecurityInfo(instrument)
+                        commissionRateQueriedCodes.add(instrument.code)
+//                        standardCode = instrument.code
                     }
                     // 如果是中金所期货，那么查询申报手续费
-                    if (standardCode.startsWith(ExchangeID.CFFEX)) {
-                        val job = scope.launch {
-                            runWithRetry({ queryFuturesOrderCommissionRate(standardCode) }) { e ->
-                                postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryInstrumentCommissionRate】查询期货申报手续费失败：$standardCode, $e")
-                            }
-                        }
-                        (request.data as MutableList<Job>).add(job)
-                    }
+//                    if (standardCode.startsWith(ExchangeID.CFFEX)) {
+//                        val job = scope.launch {
+//                            runWithRetry({ queryFuturesOrderCommissionRate(standardCode) }) { e ->
+//                                postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryInstrumentCommissionRate】查询期货申报手续费失败：$standardCode, $e")
+//                            }
+//                        }
+//                        (request.data as MutableList<Job>).add(job)
+//                    }
                 }
                 if (bIsLast) {
                     (request.continuation as Continuation<List<Job>>).resume(request.data as MutableList<Job>)
@@ -2410,14 +2311,12 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (pOrderCommRate != null && pOrderCommRate.hedgeFlag == THOST_FTDC_HF_Speculation) {
                     val commissionList = instruments.values.filter {
                         if (it.type != SecurityType.FUTURES) return@filter false
-                        if (it.commissionRate == null) return@filter false
                         return@filter it.productId == pOrderCommRate.instrumentID
-                    }.map { it.commissionRate!! }
-                    commissionList.forEach {
-                        it.orderInsertFeeByTrade = pOrderCommRate.orderCommByTrade
-                        it.orderInsertFeeByVolume = pOrderCommRate.orderCommByVolume
-                        it.orderCancelFeeByTrade = pOrderCommRate.orderActionCommByTrade
-                        it.orderCancelFeeByVolume = pOrderCommRate.orderActionCommByVolume
+                    }.forEach {
+//                        it.orderInsertFeeByTrade = pOrderCommRate.orderCommByTrade
+//                        it.orderInsertFeeByVolume = pOrderCommRate.orderCommByVolume
+//                        it.orderCancelFeeByTrade = pOrderCommRate.orderActionCommByTrade
+//                        it.orderCancelFeeByVolume = pOrderCommRate.orderActionCommByVolume
                     }
                 }
                 if (bIsLast) {
@@ -2446,10 +2345,12 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     val commissionRate = Converter.optionsCommissionRateC2A(pCommissionRate)
                     val instrumentList = instruments.values.filter {
                         if (it.type != SecurityType.OPTIONS) return@filter false
-                        if (it.commissionRate != null) return@filter false
                         return@filter it.productId == pCommissionRate.instrumentID
                     }
-                    instrumentList.forEach { it.commissionRate = commissionRate }
+                    instrumentList.forEach {
+                        commissionRate.copyFieldsToSecurityInfo(it)
+                        commissionRateQueriedCodes.add(it.code)
+                    }
                 }
                 if (bIsLast) {
                     (request.continuation as Continuation<Unit>).resume(Unit)
@@ -2476,8 +2377,10 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     // pOptionMargin.exchangeID 为空，pOptionMargin.instrumentID 为具体合约代码
                     val code = mdApi.codeMap[pOptionMargin.instrumentID] ?: pOptionMargin.instrumentID
                     val instrument = instruments[code]
-                    if (instrument != null && instrument.marginRate == null) {
-                        instrument.marginRate = Converter.optionsMarginC2A(pOptionMargin, code)
+                    if (instrument != null) {
+                        val marginRate = Converter.optionsMarginC2A(pOptionMargin, code)
+                        marginRate.copyFieldsToSecurityInfo(instrument)
+                        marginRateQueriedCodes.add(code)
                     }
                 }
                 if (bIsLast) {

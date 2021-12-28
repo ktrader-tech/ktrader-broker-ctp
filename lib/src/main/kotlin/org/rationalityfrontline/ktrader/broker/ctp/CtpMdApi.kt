@@ -7,6 +7,8 @@ import kotlinx.coroutines.runBlocking
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.kevent.KEvent
 import org.rationalityfrontline.ktrader.api.broker.*
+import org.rationalityfrontline.ktrader.api.datatype.SecurityInfo
+import org.rationalityfrontline.ktrader.api.datatype.SecurityType
 import org.rationalityfrontline.ktrader.api.datatype.Tick
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -172,18 +174,20 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 订阅行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复订阅。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
      */
-    suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, String>? = null) {
-        if (codes.isEmpty()) return
+    suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, String>? = null): List<SecurityInfo> {
+        if (codes.isEmpty()) return emptyList()
         val filteredCodes = if (extras?.get("isForce") != "true") codes.filter { it !in subscriptions } else codes
-        if (filteredCodes.isEmpty()) return
+        if (filteredCodes.isEmpty()) return emptyList()
         // CTP 行情订阅目前（2021.07）每34个订阅会丢失一个订阅（OnRspSubMarketData 中会每34个回调返回一个 bIsLast 为 true），所以需要分割
         if (filteredCodes.size >= 34) {
             val fullCodes = filteredCodes.toList()
             var startIndex = 0
+            val resultList = mutableListOf<SecurityInfo>()
             while (startIndex < filteredCodes.size) {
-                subscribeMarketData(fullCodes.subList(startIndex, min(startIndex + 33, filteredCodes.size)))
+                resultList.addAll(subscribeMarketData(fullCodes.subList(startIndex, min(startIndex + 33, filteredCodes.size))))
                 startIndex += 33
             }
+            return resultList
         } else { // codes 长度小于34，直接订阅
             val rawCodes = filteredCodes.map { code ->
                 val instrumentId = parseCode(code).second
@@ -197,6 +201,15 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     requestMap[requestId] = RequestContinuation(requestId, continuation, "subscribeMarketData", rawCodes.toMutableSet())
                 }
             })
+            return filteredCodes.mapNotNull {
+                tdApi.instruments[it]?.apply {
+                    tdApi.ensureFullSecurityInfo(it)
+                    // 如果是期权，自动订阅期权标的物的行情，以更新 Tick.optionsUnderlyingPrice 字段
+                    if (type == SecurityType.OPTIONS && optionsUnderlyingCode.isNotEmpty()) {
+                        subscribeMarketData(listOf(optionsUnderlyingCode))
+                    }
+                }
+            }
         }
     }
 
@@ -219,10 +232,10 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 订阅全市场合约行情。会自动检查合约订阅状态防止重复订阅。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
      */
-    suspend fun subscribeAllMarketData(extras: Map<String, String>? = null) {
+    suspend fun subscribeAllMarketData(extras: Map<String, String>? = null): List<SecurityInfo> {
         val codes = tdApi.instruments.keys
         if (codes.isEmpty()) throw Exception("交易前置未连接，无法获得全市场合约")
-        subscribeMarketData(codes, extras)
+        return subscribeMarketData(codes, extras)
     }
 
     /**
@@ -386,12 +399,15 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             val receiveTime: Long? = if (isTestingTickToTrade) System.nanoTime() else null
             val code = getCode(data.instrumentID)
             val lastTick = lastTicks[code]
-            val newTick = Converter.tickC2A(tdApi.tradingDate, code, data, lastTick, tdApi.instruments[code], tdApi.getInstrumentStatus(code)) { e ->
+            val info = tdApi.instruments[code]
+            val newTick = Converter.tickC2A(code, tdApi.tradingDate, data, lastTick, info, tdApi.getInstrumentStatus(code)) { e ->
                 postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
             }
             if (isTestingTickToTrade) {
-                if (newTick.extras == null) newTick.extras = mutableMapOf()
-                newTick.extras!!["tttTime"] = receiveTime.toString()
+                newTick.tttTime = receiveTime!!
+            }
+            if (info?.type == SecurityType.OPTIONS) {
+                newTick.optionsUnderlyingPrice = lastTicks[info.optionsUnderlyingCode]?.price ?: 0.0
             }
             lastTicks[code] = newTick
             // 过滤掉订阅时自动推送的第一笔数据

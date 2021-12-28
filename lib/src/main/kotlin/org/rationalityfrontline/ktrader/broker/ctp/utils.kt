@@ -145,38 +145,17 @@ internal data class QueryPositionDetailsData(
 /**
  * Order 的扩展字段，存储于 extras 中。格式为 exchangeId_orderSysId
  */
-var Order.orderSysId: String
-    get() = extras?.get("orderSysId") ?: ""
-    set(value) {
-        if (extras == null) {
-            extras = mutableMapOf()
-        }
-        extras!!["orderSysId"] = value
-    }
+var Order.orderSysId: String by StringExtrasDelegate.EMPTY
 
 /**
  * Order 的扩展字段，以 String 格式存储于 extras 中。标记该 order 是否计算过挂单费用（仅限中金所）
  */
-var Order.insertFeeCalculated: Boolean
-    get() = (extras?.get("insertFeeCalculated") ?: "false").toBoolean()
-    set(value) {
-        if (extras == null) {
-            extras = mutableMapOf()
-        }
-        extras!!["insertFeeCalculated"] = value.toString()
-    }
+var Order.insertFeeCalculated: Boolean by BooleanExtrasDelegate.FALSE
 
 /**
  * Order 的扩展字段，以 String 格式存储于 extras 中。标记该 order 是否计算过撤单费用（仅限中金所）
  */
-var Order.cancelFeeCalculated: Boolean
-    get() = (extras?.get("cancelFeeCalculated") ?: "false").toBoolean()
-    set(value) {
-        if (extras == null) {
-            extras = mutableMapOf()
-        }
-        extras!!["cancelFeeCalculated"] = value.toString()
-    }
+var Order.cancelFeeCalculated: Boolean by BooleanExtrasDelegate.FALSE
 
 /**
  * 按挂单价从低到高的顺序插入 [order]
@@ -197,30 +176,4 @@ object ExchangeID {
     const val CFFEX = "CFFEX"
     const val DCE = "DCE"
     const val CZCE = "CZCE"
-}
-
-/**
- * 期货保证金/期权权利金价格类型
- */
-internal enum class MarginPriceType {
-    /**
-     * 昨结算价
-     */
-    PRE_SETTLEMENT_PRICE,
-    /**
-     * 最新价
-     */
-    LAST_PRICE,
-    /**
-     * 今日成交均价
-     */
-    TODAY_SETTLEMENT_PRICE,
-    /**
-     * 开仓价
-     */
-    OPEN_PRICE,
-    /**
-     * max(昨结算价, 最新价)
-     */
-    MAX_PRE_SETTLEMENT_PRICE_LAST_PRICE,
 }

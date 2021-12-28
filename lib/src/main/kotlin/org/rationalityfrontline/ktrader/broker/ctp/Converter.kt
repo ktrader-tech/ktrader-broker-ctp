@@ -6,6 +6,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.max
 
 /**
  * 翻译器，用于将本地的 CTP 信息翻译为标准的 BrokerApi 信息
@@ -73,8 +74,13 @@ internal object Converter {
     }
 
     fun tickC2A(
-        tradingDay: LocalDate, code: String, tickField: CThostFtdcDepthMarketDataField, lastTick: Tick? = null,
-        info: SecurityInfo? = null, marketStatus: MarketStatus = MarketStatus.UNKNOWN, onTimeParseError: (Exception) -> Unit
+        code: String,
+        tradingDay: LocalDate,
+        tickField: CThostFtdcDepthMarketDataField,
+        lastTick: Tick? = null,
+        info: SecurityInfo? = null,
+        marketStatus: MarketStatus = MarketStatus.UNKNOWN,
+        onTimeParseError: (Exception) -> Unit,
     ): Tick {
         val updateTime = try {
             LocalTime.parse("${tickField.updateTime}.${tickField.updateMillisec}").atDate(LocalDate.now())
@@ -91,13 +97,11 @@ internal object Converter {
         }
         return Tick(
             code = code,
-            name = info?.name ?: code,
-            type = info?.type ?: SecurityType.UNKNOWN,
-            volumeMultiple = volumeMultiple,
-            priceTick = info?.priceTick ?: 1.0,
-            time = updateTime,
             tradingDay = tradingDay,
-            lastPrice = lastPrice,
+            time = updateTime,
+            status = marketStatus,
+            price = lastPrice,
+            prePrice = lastTick?.price ?: lastPrice,
             bidPrice = bidPrice,
             askPrice = askPrice,
             bidVolume = arrayOf(tickField.bidVolume1, tickField.bidVolume2, tickField.bidVolume3, tickField.bidVolume4, tickField.bidVolume5),
@@ -105,45 +109,29 @@ internal object Converter {
             volume = tickField.volume - (lastTick?.todayVolume ?: tickField.volume),
             turnover = tickField.turnover - (lastTick?.todayTurnover ?: tickField.turnover),
             openInterestDelta = tickField.openInterest.toInt() - (lastTick?.todayOpenInterest ?: tickField.openInterest.toInt()),
-            direction = if (lastTick == null) calculateTickDirection(lastPrice, bidPrice[0], askPrice[0]) else calculateTickDirection(lastPrice, lastTick.bidPrice[0], lastTick.askPrice[0]),
-            status = marketStatus,
-            preClosePrice = formatDouble(tickField.preClosePrice),
-            preSettlementPrice = formatDouble(tickField.preSettlementPrice),
-            preOpenInterest = tickField.preOpenInterest.toInt(),
             todayOpenPrice = formatDouble(tickField.openPrice),
-            todayClosePrice = formatDouble(tickField.closePrice),
             todayHighPrice = formatDouble(tickField.highestPrice),
             todayLowPrice = formatDouble(tickField.lowestPrice),
-            todayHighLimitPrice = formatDouble(tickField.upperLimitPrice),
-            todayLowLimitPrice = formatDouble(tickField.lowerLimitPrice),
-            todayAvgPrice = if (volumeMultiple == 0 || tickField.volume == 0) 0.0 else tickField.turnover / (volumeMultiple * tickField.volume),
             todayVolume = tickField.volume,
             todayTurnover = formatDouble(tickField.turnover),
-            todaySettlementPrice = formatDouble(tickField.settlementPrice),
             todayOpenInterest = tickField.openInterest.toInt(),
-        )
+            info = info,
+        ).apply {
+            if (info?.type == SecurityType.OPTIONS) {
+                optionsDelta = tickField.currDelta
+            }
+        }
     }
 
     /**
      * 行情推送的 [Tick] 中很多字段可能是无效值，CTP 内用 [Double.MAX_VALUE] 表示，在此需要统一为 0.0
      */
     @Suppress("NOTHING_TO_INLINE")
-    private inline fun formatDouble(input: Double): Double {
+    inline fun formatDouble(input: Double): Double {
         return if (input == Double.MAX_VALUE) 0.0 else input
     }
 
-    /**
-     * 计算 Tick 方向
-     */
-    private fun calculateTickDirection(lastPrice: Double, bid1Price: Double, ask1Price: Double): TickDirection {
-        return when {
-            lastPrice >= ask1Price -> TickDirection.UP
-            lastPrice <= bid1Price -> TickDirection.DOWN
-            else -> TickDirection.STAY
-        }
-    }
-
-    fun securityC2A(insField: CThostFtdcInstrumentField, onTimeParseError: (Exception) -> Unit): SecurityInfo? {
+    fun securityC2A(tradingDay: LocalDate, insField: CThostFtdcInstrumentField, onTimeParseError: (Exception) -> Unit): SecurityInfo? {
         return try {
             val type = when (insField.productClass) {
                 jctpConstants.THOST_FTDC_PC_Futures -> SecurityType.FUTURES
@@ -154,24 +142,29 @@ internal object Converter {
             if (type == SecurityType.UNKNOWN) null else {
                 SecurityInfo(
                     code = "${insField.exchangeID}.${insField.instrumentID}",
+                    tradingDay = tradingDay,
+                    name = insField.instrumentName,
                     type = type,
                     productId = insField.productID,
-                    name = insField.instrumentName,
-                    priceTick = insField.priceTick,
                     volumeMultiple = insField.volumeMultiple,
+                    priceTick = insField.priceTick,
                     isTrading = insField.isTrading != 0,
-                    openDate = LocalDate.parse(insField.openDate, DateTimeFormatter.BASIC_ISO_DATE),
-                    expireDate = LocalDate.parse(insField.expireDate, DateTimeFormatter.BASIC_ISO_DATE),
+                    startDate = LocalDate.parse(insField.openDate, DateTimeFormatter.BASIC_ISO_DATE),
+                    endDate = LocalDate.parse(insField.expireDate, DateTimeFormatter.BASIC_ISO_DATE),
                     endDeliveryDate = LocalDate.parse(insField.endDelivDate, DateTimeFormatter.BASIC_ISO_DATE),
-                    isUseMaxMarginSideAlgorithm = insField.maxMarginSideAlgorithm == jctpConstants.THOST_FTDC_MMSA_YES,
-                    optionsType = when (insField.optionsType) {
-                        jctpConstants.THOST_FTDC_CP_CallOptions -> OptionsType.CALL
-                        jctpConstants.THOST_FTDC_CP_PutOptions -> OptionsType.PUT
-                        else -> OptionsType.UNKNOWN
-                    },
-                    optionsUnderlyingCode = "${insField.exchangeID}.${insField.underlyingInstrID}",
-                    optionsStrikePrice = formatDouble(insField.strikePrice)
-                )
+                    onlyMaxMarginSide = insField.maxMarginSideAlgorithm == jctpConstants.THOST_FTDC_MMSA_YES,
+                ).apply {
+                    if (type == SecurityType.OPTIONS) {
+                        optionsType = when (insField.optionsType) {
+                            jctpConstants.THOST_FTDC_CP_CallOptions -> OptionsType.CALL
+                            jctpConstants.THOST_FTDC_CP_PutOptions -> OptionsType.PUT
+                            else -> OptionsType.UNKNOWN
+                        }
+                        optionsStrikeMode = OptionsStrikeMode.AMERICAN
+                        optionsUnderlyingCode = "${insField.exchangeID}.${insField.underlyingInstrID}"
+                        optionsStrikePrice = formatDouble(insField.strikePrice)
+                    }
+                }
             }
         } catch (e: Exception) {
             onTimeParseError(e)
@@ -269,28 +262,29 @@ internal object Converter {
             accountId = positionField.investorID,
             tradingDay = tradingDay,
             code = code,
-            name = info?.name ?: code,
-            type = info?.type ?: SecurityType.UNKNOWN,
-            volumeMultiple = info?.volumeMultiple ?: 1,
-            priceTick = info?.priceTick ?: 1.0,
             direction = direction,
             preVolume = positionField.ydPosition,
             volume = positionField.position,
-            value = positionField.useMargin,
             todayVolume = positionField.todayPosition,
             frozenVolume = frozenVolume,
-            frozenTodayVolume = 0,
+            frozenTodayVolume = max(frozenVolume - (positionField.position - positionField.todayPosition), 0),
             todayOpenVolume = positionField.openVolume,
             todayCloseVolume = positionField.closeVolume,
             todayCommission = positionField.commission,
             openCost = positionField.openCost,
-            avgOpenPrice = 0.0,
-            lastPrice = 0.0,
-            pnl = 0.0,
-        )
+            price = info?.preClosePrice ?: 0.0,
+            value = positionField.useMargin,
+        ).apply {
+            info?.copyFieldsToPosition(this)
+        }
     }
 
-    fun assetsC2A(tradingDay: LocalDate, assetsField: CThostFtdcTradingAccountField): Assets {
+    fun assetsC2A(
+        tradingDay: LocalDate,
+        assetsField: CThostFtdcTradingAccountField,
+        futuresMarginPriceType: MarginPriceType,
+        optionsMarginPriceType: MarginPriceType,
+    ): Assets {
         return Assets(
             accountId = assetsField.accountID,
             tradingDay = tradingDay,
@@ -300,6 +294,8 @@ internal object Converter {
             frozenByOrder = assetsField.frozenCash,
             todayCommission = assetsField.commission,
             yesterdayTotal = assetsField.preBalance,
+            futuresMarginPriceType = futuresMarginPriceType,
+            optionsMarginPriceType = optionsMarginPriceType,
         )
     }
 

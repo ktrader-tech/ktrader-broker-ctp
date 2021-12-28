@@ -13,8 +13,6 @@ package org.rationalityfrontline.ktrader.broker.ctp
  * @param userProductInfo 交易终端软件的产品信息
  * @param cachePath 存贮订阅信息文件等临时文件的目录
  * @param timeout 接口调用超时时间（单位：毫秒），默认为 6000
- * @param disableAutoSubscribe 是否禁止自动订阅持仓合约的行情（用于计算合约今仓保证金以及查询持仓时返回最新价及盈亏）
- * @param disableFeeCalculation 是否禁止计算保证金及手续费（首次计算某个合约的费用时，可能会查询该合约的最新 Tick、保证金率、手续费率，造成额外开销，后续再次计算时则会使用上次查询的结果）
  */
 data class CtpConfig(
     val mdFronts: List<String>,
@@ -27,8 +25,6 @@ data class CtpConfig(
     val userProductInfo: String,
     val cachePath: String,
     val timeout: Long = 6000,
-    val disableAutoSubscribe: Boolean = false,
-    val disableFeeCalculation: Boolean = false,
 ) {
     companion object {
         /**
@@ -56,8 +52,6 @@ data class CtpConfig(
                 userProductInfo = config["UserProductInfo"] ?: "",
                 cachePath = config["CachePath"] ?: "",
                 timeout = config["Timeout"]?.toLongOrNull() ?: 6000,
-                disableAutoSubscribe = config["DisableAutoSubscribe"] == "true",
-                disableFeeCalculation = config["DisableFeeCalculation"] == "true",
             )
         }
     }
