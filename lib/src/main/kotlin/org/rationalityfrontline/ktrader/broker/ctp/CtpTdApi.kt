@@ -477,7 +477,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 if (info.todayHighLimitPrice == 0.0 && code !in dayPriceInfoQueriedCodes) {
                     postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期货最新 Tick：$code")
-                    runWithRetry({ queryLastTick(code, false) }) { e ->
+                    runWithRetry({ queryLastTick(code, useCache = false, extras = mapOf("ensureFullInfo" to "false")) }) { e ->
                         handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期货最新 Tick出错：$code, $e")
                     }
                 }
@@ -497,7 +497,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
                 if (info.todayHighLimitPrice == 0.0 && code !in dayPriceInfoQueriedCodes) {
                     postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期权最新 Tick：$code")
-                    runWithRetry({ queryLastTick(code, false) }) { e ->
+                    runWithRetry({ queryLastTick(code, useCache = false, extras = mapOf("ensureFullInfo" to "false")) }) { e ->
                         handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期权最新 Tick出错：$code, $e")
                     }
                 }
@@ -686,7 +686,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 查询最新 [Tick]。如果对应的 [instruments] 无当日价格信息（涨跌停价、昨收昨结昨仓），则自动将当日价格信息写入其中
+     * 查询最新 [Tick]。如果对应的 [instruments] 无当日价格信息（涨跌停价、昨收昨结昨仓），则自动将当日价格信息写入其中（见 [CtpTdSpi.OnRspQryDepthMarketData]）
+     * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
+     * 如果之前没查过，会很耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
      */
     suspend fun queryLastTick(code: String, useCache: Boolean, extras: Map<String, String>? = null): Tick? {
         var resultTick: Tick? = null
@@ -711,6 +713,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         val info = instruments[code]
         if (info?.type == SecurityType.OPTIONS && resultTick != null) {
             resultTick.optionsUnderlyingPrice = getOrQueryTick(info.optionsUnderlyingCode).first?.price ?: 0.0
+        }
+        if (info != null && extras?.get("ensureFullInfo") != "false") {
+            ensureFullSecurityInfo(code)
         }
         return resultTick
     }
@@ -754,13 +759,15 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 查询某一特定合约的信息。[extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时。当 useCache 为 false 时无效】
+     * 查询某一特定合约的信息。
+     * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
+     * 如果之前没查过，会耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
      */
     suspend fun querySecurity(code: String, useCache: Boolean = true, extras: Map<String, String>? = null): SecurityInfo? {
         if (useCache) {
             val cachedInstrument = instruments[code]
             if (cachedInstrument != null) {
-                if (extras?.get("ensureFullInfo") == "true") {
+                if (extras?.get("ensureFullInfo") != "false") {
                     ensureFullSecurityInfo(code)
                 }
                 return cachedInstrument
@@ -780,11 +787,13 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 查询全市场合约的信息。[extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会很耗时。当 useCache 为 false 时无效】
+     * 查询全市场合约的信息。
+     * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
+     * 如果之前没查过，会很耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
      */
     suspend fun queryAllSecurities(useCache: Boolean = true, extras: Map<String, String>? = null): List<SecurityInfo> {
         if (useCache && instruments.isNotEmpty()) {
-            if (extras?.get("ensureFullInfo") == "true") {
+            if (extras?.get("ensureFullInfo") != "false") {
                 instruments.keys.forEach {
                     ensureFullSecurityInfo(it)
                 }
@@ -801,7 +810,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 按 [SecurityInfo.productId] 查询证券信息。[extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时。当 useCache 为 false 时无效】
+     * 按 [SecurityInfo.productId] 查询证券信息。
+     * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
+     * 如果之前没查过，会耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
      * @param productId 证券品种
      */
     suspend fun querySecurities(
@@ -811,7 +822,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     ): List<SecurityInfo> {
         if (useCache && instruments.isNotEmpty()) {
             val results = instruments.values.filter { it.productId == productId }
-            if (extras?.get("ensureFullInfo") == "true") {
+            if (extras?.get("ensureFullInfo") != "false") {
                 results.forEach {
                     ensureFullSecurityInfo(it.code)
                 }
@@ -822,7 +833,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 按标的物代码查询期权信息。[extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时。当 useCache 为 false 时无效】
+     * 按标的物代码查询期权信息。
+     * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
+     * 如果之前没查过，会耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
      * @param underlyingCode 期权标的物的代码
      * @param type 期权的类型，默认为 null，表示返回所有类型的期权
      */
@@ -834,7 +847,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     ): List<SecurityInfo> {
         if (useCache && instruments.isNotEmpty()) {
             val results = instruments.values.filter { it.type == SecurityType.OPTIONS && it.optionsUnderlyingCode == underlyingCode }
-            if (extras?.get("ensureFullInfo") == "true") {
+            if (extras?.get("ensureFullInfo") != "false") {
                 results.forEach {
                     ensureFullSecurityInfo(it.code)
                 }

@@ -98,7 +98,7 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         kEvent.release()
     }
 
-    override fun getTradingDay(): LocalDate {
+    override suspend fun getTradingDay(): LocalDate {
         val tradingDay = when {
             mdConnected -> mdApi.getTradingDay()
             tdConnected -> tdApi.getTradingDay()
@@ -111,7 +111,7 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         }
     }
 
-    override fun setTestTickToTrade(value: Boolean) {
+    override suspend fun setTestingTickToTrade(value: Boolean) {
         mdApi.isTestingTickToTrade = value
         tdApi.isTestingTickToTrade = value
     }

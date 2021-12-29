@@ -31,7 +31,7 @@ object CtpBrokerInfo: ApiInfo {
         * 支持 7x24 小时不间断运行
         
         支持的额外参数：
-        querySecurity/querySecurities/queryAllSecurities/queryOptions：[ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会比较耗时。当 useCache 为 false 时无效】
+        querySecurity/querySecurities/queryAllSecurities/queryOptions/queryLastTick：[extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时。当 useCache 为 false 时无效，且返回的 SecurityInfo 信息不完整】
     """.trimIndent()
 
     /**
