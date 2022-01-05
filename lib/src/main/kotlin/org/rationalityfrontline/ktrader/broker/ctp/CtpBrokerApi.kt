@@ -2,6 +2,10 @@
 
 package org.rationalityfrontline.ktrader.broker.ctp
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import org.rationalityfrontline.kevent.EventDispatchMode
 import org.rationalityfrontline.kevent.KEvent
 import org.rationalityfrontline.kevent.SubscriberThreadMode
@@ -26,65 +30,66 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
             field = value
             postBrokerEvent(BrokerEventType.BROKER_STATUS, value)
         }
-    override val mdConnected: Boolean get() = mdApi.connected
-    override val tdConnected: Boolean get() = tdApi.connected
+    var mdConnected: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            brokerStatus = if (value && tdConnected) BrokerStatus.CONNECTED else {
+                if (brokerStatus != BrokerStatus.CLOSING) BrokerStatus.CONNECTING else BrokerStatus.CLOSING
+            }
+        }
+    var tdConnected: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            brokerStatus = if (value && mdConnected) BrokerStatus.CONNECTED else {
+                if (brokerStatus != BrokerStatus.CLOSING) BrokerStatus.CONNECTING else BrokerStatus.CLOSING
+            }
+        }
 
     override val kEvent: KEvent = KEvent(
         name = "CTP-$account",
-        defaultDispatchMode = EventDispatchMode.SEQUENTIAL,
-        defaultThreadMode = SubscriberThreadMode.BACKGROUND,
+        defaultDispatchMode = EventDispatchMode.POSTING,
+        defaultThreadMode = SubscriberThreadMode.POSTING,
     )
 
+    /**
+     * 协程 scope
+     */
+    val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    override var isTestingTickToTrade: Boolean = false
+        private set
+
+    override var dataApi: DataApi? = null
+
     init {
-        mdApi = CtpMdApi(this.config, kEvent, sourceId)
-        tdApi = CtpTdApi(this.config, kEvent, sourceId)
+        mdApi = CtpMdApi(this)
+        tdApi = CtpTdApi(this)
         mdApi.tdApi = tdApi
         tdApi.mdApi = mdApi
     }
 
-    override val isTestingTickToTrade: Boolean
-        get() = mdApi.isTestingTickToTrade && tdApi.isTestingTickToTrade
-
-    override var dataApi: DataApi? = null
-
     /**
      * 向 [kEvent] 发送一条 [BrokerEvent]
      */
-    private fun postBrokerEvent(type: BrokerEventType, data: Any) {
+    fun postBrokerEvent(type: BrokerEventType, data: Any) {
         kEvent.post(type, BrokerEvent(type, sourceId, data))
     }
 
     /**
      * 向 [kEvent] 发送一条 [BrokerEvent].[LogEvent]
      */
-    private fun postBrokerLogEvent(level: LogLevel, msg: String) {
+    fun postBrokerLogEvent(level: LogLevel, msg: String) {
         postBrokerEvent(BrokerEventType.LOG, LogEvent(level, msg))
     }
 
     override suspend fun connect(extras: Map<String, String>?) {
         if (brokerStatus != BrokerStatus.CREATED) return
         brokerStatus = BrokerStatus.CONNECTING
-        kEvent.subscribe<BrokerEvent>(BrokerEventType.CONNECTION) { brokerEvent ->
-            val connectionEvent = brokerEvent.data.data as ConnectionEvent
-            when (connectionEvent.type) {
-                ConnectionEventType.MD_LOGGED_IN,
-                ConnectionEventType.TD_LOGGED_IN, -> {
-                    if (mdConnected && tdConnected) brokerStatus = BrokerStatus.CONNECTED
-                }
-                ConnectionEventType.MD_NET_DISCONNECTED,
-                ConnectionEventType.TD_NET_DISCONNECTED,
-                ConnectionEventType.MD_LOGGED_OUT,
-                ConnectionEventType.TD_LOGGED_OUT, -> {
-                    if (brokerStatus != BrokerStatus.CLOSING) {
-                        brokerStatus = BrokerStatus.CONNECTING
-                    }
-                }
-                else -> Unit
-            }
-        }
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】开始连接")
-        if (!mdConnected) mdApi.connect()
-        if (!tdConnected) tdApi.connect()
+        mdApi.connect()
+        tdApi.connect()
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】连接成功")
     }
 
@@ -95,10 +100,11 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         mdApi.close()
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.close】关闭成功")
         brokerStatus = BrokerStatus.CLOSED
+        scope.cancel()
         kEvent.release()
     }
 
-    override suspend fun getTradingDay(): LocalDate {
+    override suspend fun getTradingDay(extras: Map<String, String>?): LocalDate {
         val tradingDay = when {
             mdConnected -> mdApi.getTradingDay()
             tdConnected -> tdApi.getTradingDay()
@@ -111,9 +117,8 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         }
     }
 
-    override suspend fun setTestingTickToTrade(value: Boolean) {
-        mdApi.isTestingTickToTrade = value
-        tdApi.isTestingTickToTrade = value
+    override suspend fun setTestingTickToTrade(value: Boolean, extras: Map<String, String>?) {
+        isTestingTickToTrade = value
     }
 
     override suspend fun subscribeTicks(codes: Collection<String>, extras: Map<String, String>?): List<SecurityInfo> {
@@ -140,9 +145,6 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         unsubscribeTicks(listOf(code), extras)
     }
 
-    /**
-     * [useCache] 无效，总是查询本地维护的数据，CTP 无此查询接口
-     */
     override suspend fun queryTickSubscriptions(useCache: Boolean, extras: Map<String, String>?): List<String> {
         return mdApi.querySubscriptions(useCache, extras)
     }
@@ -169,7 +171,7 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
 
     override suspend fun queryOptions(
         underlyingCode: String,
-        type: OptionsType?,
+        type: OptionsType,
         useCache: Boolean,
         extras: Map<String, String>?
     ): List<SecurityInfo> {
@@ -182,19 +184,16 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         volume: Int,
         direction: Direction,
         offset: OrderOffset,
+        closePositionPrice: Double,
         orderType: OrderType,
         minVolume: Int,
         extras: Map<String, String>?
     ): Order {
-        return tdApi.insertOrder(code, price, volume, direction, offset, orderType, minVolume, extras)
+        return tdApi.insertOrder(code, price, volume, direction, offset, closePositionPrice, orderType, minVolume, extras)
     }
 
     override suspend fun cancelOrder(orderId: String, extras: Map<String, String>?) {
         tdApi.cancelOrder(orderId, extras)
-    }
-
-    override suspend fun cancelAllOrders(extras: Map<String, String>?) {
-        queryOrders(onlyUnfinished = true).forEach { cancelOrder(it.orderId) }
     }
 
     override suspend fun queryOrder(orderId: String, useCache: Boolean, extras: Map<String, String>?): Order? {

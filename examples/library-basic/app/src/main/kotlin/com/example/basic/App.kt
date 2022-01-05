@@ -22,14 +22,11 @@ fun main() {
         userProductInfo = "",  // 产品信息
         cachePath = "./data/ctp",  // 本地缓存文件存储目录
         timeout = 6000,  // 接口调用超时时间（单位：毫秒）
-        disableAutoSubscribe = false,  // 是否禁用自动订阅
-        disableFeeCalculation = false,  // 是否禁用费用计算
     )
     // 创建 CtpBrokerApi 实例
     val api = CtpBrokerApi(config)
     println(api.version)
     // 设置 TickToTrade 测试
-    api.setTestTickToTrade(true)
     var tttTestCount = 0
     // 订阅所有事件
     api.kEvent.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList()) { event -> runBlocking {
@@ -41,14 +38,13 @@ fun main() {
                 val tick = brokerEvent.data as Tick
                 if (tttTestCount <= 10) {
                     // 下无效单测试 TickToTrade
-                    api.insertOrder(tick.code, 0.0, 1, Direction.LONG, OrderOffset.OPEN, OrderType.LIMIT, extras = mapOf("tickTime" to (tick.extras?.get("tttTime") ?: "0")))
+                    api.insertOrder(tick.code, 0.0, 1, Direction.LONG, OrderOffset.OPEN, extras = mapOf("tickTime" to (tick.tttTime.toString())))
                     tttTestCount++
                 }
             }
             BrokerEventType.ORDER_STATUS -> {
                 val order = brokerEvent.data as Order
-                val extras = order.extras!!
-                val tickToTrade = extras["tttTime"]!!.toLong() - extras["tickTime"]!!.toLong()
+                val tickToTrade = order.tttTime - (order.extras?.get("tickTime")?.toLong() ?: 0)
                 println("TickToTrade: $tickToTrade ns")
             }
             // 其它事件（网络连接、订单回报、成交回报等）
@@ -59,6 +55,7 @@ fun main() {
     }}
     // 测试 api
     runBlocking {
+        api.setTestingTickToTrade(true)
         api.connect()
         println("CTP 已连接")
         println("当前交易日：${api.getTradingDay()}")
@@ -70,7 +67,7 @@ fun main() {
         println(api.queryOrders(onlyUnfinished = false).joinToString("\n"))
         println("查询当日全部成交记录：")
         println(api.queryTrades().joinToString("\n"))
-        api.subscribeTick("DCE.m2201")
+        api.subscribeTick("DCE.m2205")
         delay(10000)
         api.close()
         println("CTP 已关闭")

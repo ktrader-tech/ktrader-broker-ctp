@@ -5,7 +5,6 @@ package org.rationalityfrontline.ktrader.broker.ctp
 import kotlinx.coroutines.*
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.jctp.jctpConstants.*
-import org.rationalityfrontline.kevent.KEvent
 import org.rationalityfrontline.ktrader.api.broker.*
 import org.rationalityfrontline.ktrader.api.datatype.*
 import java.io.File
@@ -20,7 +19,8 @@ import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import kotlin.math.sign
 
-internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) {
+internal class CtpTdApi(val api: CtpBrokerApi) {
+    val config: CtpConfig = api.config
     private val tdApi: CThostFtdcTraderApi
     private val tdSpi: CtpTdSpi
     /**
@@ -42,10 +42,6 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         cacheFile.writeText("$tradingDay\n$nextOrderRef")
         return nextOrderRef
     }
-    /**
-     * 协程 scope
-     */
-    val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     /**
      * 上次更新的交易日。当 [connected] 处于 false 状态时可能因过期而失效
      */
@@ -69,14 +65,17 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      */
     private var inited = false
     /**
+     * 是否在 [connect] 时检测到交易日变更
+     */
+    private var newTradingDayOnConnect = false
+    /**
      * 交易前置是否已连接
      */
     private var frontConnected: Boolean = false
     /**
      * 是否已完成登录操作（即处于可用状态）
      */
-    var connected: Boolean = false
-        private set
+    var connected: Boolean by api::tdConnected
     /**
      * 前置编号（客户端连接到的前置机的编号，同一交易前置地址的前置编号相同），用于确定 orderId，参见 tdSpi.OnRspUserLogin
      */
@@ -118,14 +117,6 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      */
     private var optionsMarginPriceType: MarginPriceType = MarginPriceType.PRE_SETTLEMENT_PRICE
     /**
-     * 本地缓存的资产信息，并不维护
-     */
-    private var assets: Assets = Assets(config.investorId)
-    /**
-     * 上次查询账户资产的时间
-     */
-    private var lastQueryAssetsTime = 0L
-    /**
      * 本地维护的持仓信息，key 为 code，value 为 [BiPosition]
      */
     private val positions: MutableMap<String, BiPosition> = mutableMapOf()
@@ -157,10 +148,6 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 合约撤单次数统计，用于检测频繁撤单，key 为 code，value 为撤单次数
      */
     private val cancelStatistics: MutableMap<String, Int> = mutableMapOf()
-    /**
-     * 是否正处于测试 TickToTrade 状态
-     */
-    var isTestingTickToTrade: Boolean = false
 
     init {
         val cachePath = config.cachePath.ifBlank { "./data/ctp/" }
@@ -196,7 +183,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         when (order.direction) {
             Direction.LONG -> unfinishedLongOrders.insert(order)
             Direction.SHORT -> unfinishedShortOrders.insert(order)
-            Direction.UNKNOWN -> postBrokerLogEvent(LogLevel.WARNING, "【CtpTdApi.insertUnfinishedOrder】订单方向为 Direction.UNKNOWN（${order.code}, ${order.orderId}）")
+            Direction.UNKNOWN -> api.postBrokerLogEvent(LogLevel.WARNING, "【CtpTdApi.insertUnfinishedOrder】订单方向为 Direction.UNKNOWN（${order.code}, ${order.orderId}）")
         }
     }
 
@@ -207,7 +194,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         when (order.direction) {
             Direction.LONG -> unfinishedLongOrders.remove(order)
             Direction.SHORT -> unfinishedShortOrders.remove(order)
-            Direction.UNKNOWN -> postBrokerLogEvent(LogLevel.WARNING, "【CtpTdApi.removeUnfinishedOrder】订单方向为 Direction.UNKNOWN（${order.code}, ${order.orderId}）")
+            Direction.UNKNOWN -> api.postBrokerLogEvent(LogLevel.WARNING, "【CtpTdApi.removeUnfinishedOrder】订单方向为 Direction.UNKNOWN（${order.code}, ${order.orderId}）")
         }
     }
 
@@ -243,27 +230,6 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 向 [kEvent] 发送一条 [BrokerEvent]
-     */
-    private fun postBrokerEvent(type: BrokerEventType, data: Any) {
-        kEvent.post(type, BrokerEvent(type, sourceId, data))
-    }
-
-    /**
-     * 向 [kEvent] 发送一条 [BrokerEvent].[LogEvent]
-     */
-    private fun postBrokerLogEvent(level: LogLevel, msg: String) {
-        postBrokerEvent(BrokerEventType.LOG, LogEvent(level, msg))
-    }
-
-    /**
-     * 向 [kEvent] 发送一条 [BrokerEvent].[ConnectionEvent]
-     */
-    private fun postBrokerConnectionEvent(msgType: ConnectionEventType, msg: String = "") {
-        postBrokerEvent(BrokerEventType.CONNECTION, ConnectionEvent(msgType, msg))
-    }
-
-    /**
      * 连接交易前置并自动完成登录（还会自动查询持仓、订单、成交记录等信息，详见 [CtpTdSpi.OnFrontConnected]）。在无法连接至前置的情况下可能会长久阻塞。
      * 该操作不可加超时限制，因为可能在双休日等非交易时间段启动程序。
      */
@@ -272,18 +238,17 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         suspendCoroutine<Unit> { continuation ->
             val requestId = Int.MIN_VALUE // 因为 OnFrontConnected 中 requestId 会重置为 0，为防止 requestId 重复，取整数最小值
             requestMap[requestId] = RequestContinuation(requestId, continuation, "connect")
-            postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】连接前置服务器...")
+            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】连接前置服务器...")
             tdApi.Init()
             inited = true
         }
     }
 
     /**
-     * 关闭并释放资源，会发送一条 [BrokerEventType.CONNECTION] ([ConnectionEventType.TD_NET_DISCONNECTED]) 信息
+     * 关闭并释放资源
      */
     fun close() {
         if (frontConnected) tdSpi.OnFrontDisconnected(0)
-        scope.cancel()
         instruments.clear()
         productStatusMap.clear()
         codeProductMap.clear()
@@ -306,7 +271,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 向交易所发送订单报单，会自动检查自成交。[extras.minVolume: Int]【最小成交量。仅当 [orderType] 为 [OrderType.FAK] 时生效】
+     * 向交易所发送订单报单，会自动检查自成交
      */
     suspend fun insertOrder(
         code: String,
@@ -314,6 +279,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         volume: Int,
         direction: Direction,
         offset: OrderOffset,
+        closePositionPrice: Double,
         orderType: OrderType,
         minVolume: Int = 0,
         extras: Map<String, String>? = null
@@ -376,7 +342,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             if (errorInfo == null) {
                 runWithResultCheck({ tdApi.ReqOrderInsert(reqField, nextRequestId()) }, {
-                    if (isTestingTickToTrade) insertTime = System.nanoTime()
+                    if (api.isTestingTickToTrade) insertTime = System.nanoTime()
                 })
             }
         }
@@ -384,18 +350,16 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         val now = LocalDateTime.now()
         val order = Order(
             config.investorId, "${frontId}_${sessionId}_${orderRef}", tradingDate,
-            code, instruments[code]?.name ?: code, price, -1.0, volume, minVolume, direction, offset, orderType,
+            code, instruments[code]?.name ?: code, price, closePositionPrice, volume, minVolume, direction, offset, orderType,
             OrderStatus.SUBMITTING, "报单已提交",
             0, 0.0, 0.0, 0.0, 0.0,
             now, now,
-            extras = mutableMapOf<String, String>().apply {
-                if (extras != null) {
-                    putAll(extras)
-                }
-            }
+            extras = if (extras != null) {
+                mutableMapOf<String, String>().apply { putAll(extras) }
+            } else null
         )
         if (errorInfo == null) {
-            if (isTestingTickToTrade) {
+            if (api.isTestingTickToTrade) {
                 order.tttTime = insertTime!!
             }
             ensureFullSecurityInfo(code)
@@ -407,7 +371,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             order.statusMsg = errorInfo!!
             todayOrders[orderRef] = order
         }
-        return order.deepCopy()
+        return order
     }
 
     /**
@@ -437,7 +401,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
         }
         if (order == null || order.orderId != orderId) {
-            throw Exception("本地拒撤：未找到对应的订单记录")
+            throw Exception("本地拒撤：未找到对应的订单记录: $orderId")
         } else {
             if (order.status !in setOf(OrderStatus.UNKNOWN, OrderStatus.SUBMITTING, OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED)) {
                 throw Exception("本地拒撤：订单当前状态不可撤（${order.status}）")
@@ -458,25 +422,25 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             if (throwException){
                 throw e
             } else {
-                postBrokerLogEvent(LogLevel.ERROR, msg)
+                api.postBrokerLogEvent(LogLevel.ERROR, msg)
             }
         }
         when (info.type) {
             SecurityType.FUTURES -> {
                 if (info.marginRateLong == 0.0) {
-                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期货保证金率：$code")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期货保证金率：$code")
                     runWithRetry({ queryFuturesMarginRate(code) }) { e ->
                         handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期货保证金率出错：$code, $e")
                     }
                 }
                 if (info.openCommissionRate == 0.0) {
-                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期货手续费率：$code")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期货手续费率：$code")
                     runWithRetry({ queryFuturesCommissionRate(code) }) { e ->
                         handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期货手续费率出错：$code, $e")
                     }
                 }
                 if (info.todayHighLimitPrice == 0.0 && code !in dayPriceInfoQueriedCodes) {
-                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期货最新 Tick：$code")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期货最新 Tick：$code")
                     runWithRetry({ queryLastTick(code, useCache = false, extras = mapOf("ensureFullInfo" to "false")) }) { e ->
                         handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期货最新 Tick出错：$code, $e")
                     }
@@ -484,19 +448,19 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             SecurityType.OPTIONS -> {
                 if (info.marginRateLong == 0.0) {
-                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期权保证金率：$code")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期权保证金率：$code")
                     runWithRetry({ queryOptionsMargin(code) }) { e ->
                         handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期保证金出错：$code, $e")
                     }
                 }
                 if (info.openCommissionRate == 0.0) {
-                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期权手续费率：$code")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期权手续费率：$code")
                     runWithRetry({ queryOptionsCommissionRate(code) }) { e ->
                         handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期权手续费率出错：$code, $e")
                     }
                 }
                 if (info.todayHighLimitPrice == 0.0 && code !in dayPriceInfoQueriedCodes) {
-                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期权最新 Tick：$code")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.ensureFullSecurityInfo】自动查询期权最新 Tick：$code")
                     runWithRetry({ queryLastTick(code, useCache = false, extras = mapOf("ensureFullInfo" to "false")) }) { e ->
                         handleException(e, "【CtpTdApi.ensureFullSecurityInfo】查询期权最新 Tick出错：$code, $e")
                     }
@@ -733,10 +697,10 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             // 如果缓存的 tick 为空，说明未订阅该合约，那么订阅该合约以方便后续计算
             if (tick == null) {
                 try {
-                    postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.getOrQueryTick】自动订阅行情：$code")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.getOrQueryTick】自动订阅行情：$code")
                     mdApi.subscribeMarketData(listOf(code))
                 } catch (e: Exception) {
-                    postBrokerLogEvent(LogLevel.ERROR, "【CtpTdApi.getOrQueryTick】自动订阅合约行情失败：$code, $e")
+                    api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdApi.getOrQueryTick】自动订阅合约行情失败：$code, $e")
                 }
             } else {
                 isLatestTick = true
@@ -747,9 +711,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             tick = cachedTickMap[code]
             // 如果未从本地缓存中获得旧的 tick，查询最新 tick（查询操作会自动缓存 tick 至本地缓存中）
             if (tick == null) {
-                postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.getOrQueryTick】自动查询并缓存最新 Tick：$code")
+                api.postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.getOrQueryTick】自动查询并缓存最新 Tick：$code")
                 tick = runWithRetry({ queryLastTick(code, useCache = false) }) { e->
-                    postBrokerLogEvent(LogLevel.ERROR, "【CtpTdApi.getOrQueryTick】查询合约最新 Tick 失败：$code, $e")
+                    api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdApi.getOrQueryTick】查询合约最新 Tick 失败：$code, $e")
                     null
                 }
                 if (tick != null) isLatestTick = true
@@ -841,12 +805,17 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      */
     suspend fun queryOptions(
         underlyingCode: String,
-        type: OptionsType? = null,
+        type: OptionsType = OptionsType.UNKNOWN,
         useCache: Boolean = true,
         extras: Map<String, String>? = null
     ): List<SecurityInfo> {
+        val predicate = if (type == OptionsType.UNKNOWN) {
+            { info: SecurityInfo -> info.type == SecurityType.OPTIONS && info.optionsUnderlyingCode == underlyingCode }
+        } else {
+            { info: SecurityInfo -> info.type == SecurityType.OPTIONS && info.optionsUnderlyingCode == underlyingCode && info.optionsType == type }
+        }
         if (useCache && instruments.isNotEmpty()) {
-            val results = instruments.values.filter { it.type == SecurityType.OPTIONS && it.optionsUnderlyingCode == underlyingCode }
+            val results = instruments.values.filter(predicate)
             if (extras?.get("ensureFullInfo") != "false") {
                 results.forEach {
                     ensureFullSecurityInfo(it.code)
@@ -854,7 +823,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             return results
         }
-        return queryAllSecurities(useCache = false).filter { it.type == SecurityType.OPTIONS && it.optionsUnderlyingCode == underlyingCode }
+        return queryAllSecurities(useCache = false).filter(predicate)
     }
 
     /**
@@ -993,26 +962,20 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 查询账户资金信息
+     * 查询账户资金信息。[useCache] 参数无效
      */
     suspend fun queryAssets(useCache: Boolean = true, extras: Map<String, String>? = null): Assets {
-        // 10 秒内，使用上次查询结果
-        if (useCache && System.currentTimeMillis() - lastQueryAssetsTime < 10000) {
-            return assets.deepCopy()
-        }
         val qryField = CThostFtdcQryTradingAccountField().apply {
             brokerID = config.brokerId
             investorID = config.investorId
             currencyID = "CNY"
         }
         val requestId = nextRequestId()
-        val rawAssets = runWithResultCheck<Assets>({ tdApi.ReqQryTradingAccount(qryField, requestId) }, {
+        val assets = runWithResultCheck<Assets>({ tdApi.ReqQryTradingAccount(qryField, requestId) }, {
             suspendCoroutineWithTimeout(config.timeout) { continuation ->
                 requestMap[requestId] = RequestContinuation(requestId, continuation)
             }
         })
-        assets = rawAssets
-        lastQueryAssetsTime = System.currentTimeMillis()
         // 计算持仓盈亏
         assets.positionPnl = 0.0
         positions.forEach { (code, bi) ->
@@ -1029,7 +992,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 }
             }
         }
-        return assets.deepCopy()
+        return assets
     }
 
     /**
@@ -1051,7 +1014,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     suspend fun queryPosition(code: String, direction: Direction, useCache: Boolean = true, extras: Map<String, String>? = null): Position? {
         if (direction == Direction.UNKNOWN) return null
         return if (useCache) {
-            queryCachedPosition(code, direction)?.deepCopy()
+            queryCachedPosition(code, direction)
         } else {
             val qryField = CThostFtdcQryInvestorPositionField().apply {
                 instrumentID = parseCode(code).second
@@ -1096,7 +1059,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     lastTick.calculatePosition(it, marginPriceType, calculateValue = true)
                 }
             }
-            return positionList.map { it.deepCopy() }
+            return positionList
         } else {
             val qryField = CThostFtdcQryInvestorPositionField().apply {
                 if (!code.isNullOrEmpty()) instrumentID = parseCode(code).second
@@ -1225,9 +1188,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (ticks.isNotEmpty()) {
                     try {
                         val enterTime = LocalTime.parse(pInstrumentStatus.enterTime).atDate(LocalDate.now())
-                        ticks.forEach { postBrokerEvent(BrokerEventType.TICK, it.copy(status = marketStatus, time = enterTime, volume = 0, turnover = 0.0, openInterestDelta = 0)) }
+                        ticks.forEach { api.postBrokerEvent(BrokerEventType.TICK, it.copy(status = marketStatus, time = enterTime, volume = 0, turnover = 0.0, openInterestDelta = 0)) }
                     } catch (e: Exception) {
-                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnInstrumentStatus】解析 enterTime 失败：$e")
+                        api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnInstrumentStatus】解析 enterTime 失败：$e")
                     }
                 }
             }
@@ -1242,7 +1205,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val errorInfo = "${pRspInfo.errorMsg}, requestId=$nRequestID, isLast=$bIsLast"
                 val connectRequests = requestMap.values.filter { it.tag == "connect" }
                 if (connectRequests.isEmpty()) {
-                    postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspError】$errorInfo")
+                    api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspError】$errorInfo")
                 } else {
                     resumeRequestsWithException("connect", errorInfo)
                 }
@@ -1253,49 +1216,49 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
 
         /**
-         * 行情前置连接时回调。会将 [requestId] 置为 0；发送一条 [BrokerEventType.CONNECTION] 信息
+         * 行情前置连接时回调。会将 [requestId] 置为 0
          */
         override fun OnFrontConnected() {
             frontConnected = true
             requestId.set(0)
-            postBrokerConnectionEvent(ConnectionEventType.TD_NET_CONNECTED)
-            scope.launch {
+            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】前置服务器已连接")
+            api.scope.launch {
                 fun resumeConnectWithException(errorInfo: String, e: Exception) {
                     e.printStackTrace()
-                    postBrokerLogEvent(LogLevel.ERROR, errorInfo)
+                    api.postBrokerLogEvent(LogLevel.ERROR, errorInfo)
                     resumeRequestsWithException("connect", errorInfo)
                 }
                 try {
                     // 请求客户端认证
-                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证...")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证...")
                     try {
                         if (hasRequest("connect")) {
                             reqAuthenticate()
                         } else {
                             reqAuthenticate(60000)
                         }
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证成功")
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证成功")
                     } catch (e: Exception) {
                         resumeConnectWithException("【交易接口登录】请求客户端认证失败：$e", e)
                     }
                     // 请求用户登录
-                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】资金账户登录...")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】资金账户登录...")
                     try {
                         reqUserLogin()
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】资金账户登录成功")
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】资金账户登录成功")
                     } catch (e: Exception) {
                         resumeConnectWithException("【交易接口登录】请求用户登录失败：$e", e)
                     }
                     // 请求结算单确认
-                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】结算单确认...")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】结算单确认...")
                     try {
                         reqSettlementInfoConfirm()
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】结算单确认成功")
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】结算单确认成功")
                     } catch (e: Exception) {
                         resumeConnectWithException("【交易接口登录】请求结算单确认失败：$e", e)
                     }
                     // 查询全市场合约
-                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约...")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约...")
                     runWithRetry({
                         val allInstruments = queryAllSecurities(false, null)
                         allInstruments.forEach {
@@ -1303,50 +1266,50 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             codeProductMap[it.code] = it.productId
                             mdApi.codeMap[it.code.split('.', limit = 2)[1]] = it.code
                         }
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约成功")
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约成功")
                     }) { e ->
                         resumeConnectWithException("【交易接口登录】查询全市场合约失败：$e", e)
                     }
                     // 查询保证金价格类型、持仓合约的保证金率及手续费率（如果未禁止费用计算）
                     // 查询保证金价格类型
-                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型...")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型...")
                     runWithRetry({
                         queryMarginPriceType()
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型成功")
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型成功")
                     }) { e ->
                         resumeConnectWithException("【交易接口登录】查询保证金价格类型失败：$e", e)
                     }
                     // 查询持仓合约的手续费率及保证金率
-                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率...")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率...")
                     try {
                         runWithRetry({ queryFuturesCommissionRate() })
                         runWithRetry({ queryFuturesMarginRate() })
                         runWithRetry({ queryOptionsCommissionRate() })
                         runWithRetry({ queryOptionsMargin() })
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
                     } catch (e: Exception) {
                         resumeConnectWithException("【交易接口登录】查询持仓合约手续费率及保证金率失败：$e", e)
                     }
                     // 查询账户持仓
-                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓...")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓...")
                     runWithRetry({
                         queryPositions(useCache = false)
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓成功")
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓成功")
                     }) { e ->
                         resumeConnectWithException("【交易接口登录】查询账户持仓失败：$e", e)
                     }
                     // 订阅持仓合约行情（如果行情可用且未禁止自动订阅）
                     if (mdApi.connected) {
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】订阅持仓合约行情...")
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】订阅持仓合约行情...")
                         try {
                             mdApi.subscribeMarketData(positions.keys)
-                            postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】订阅持仓合约行情成功")
+                            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】订阅持仓合约行情成功")
                         } catch (e: Exception) {
                             resumeConnectWithException("【交易接口登录】订阅持仓合约行情失败：$e", e)
                         }
                     }
                     // 查询当日订单
-                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日订单...")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日订单...")
                     runWithRetry({
                         val orders = queryOrders(onlyUnfinished = false, useCache = false)
                         val finishedStatus = setOf(OrderStatus.CANCELED, OrderStatus.FILLED, OrderStatus.ERROR)
@@ -1356,46 +1319,51 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                                 when (it.direction) {
                                     Direction.LONG -> unfinishedLongOrders.insert(it)
                                     Direction.SHORT -> unfinishedShortOrders.insert(it)
-                                    else -> postBrokerLogEvent(LogLevel.WARNING, "【交易接口登录】查询到未知方向的订单（${it.code}, ${it.direction}）")
+                                    else -> api.postBrokerLogEvent(LogLevel.WARNING, "【交易接口登录】查询到未知方向的订单（${it.code}, ${it.direction}）")
                                 }
                             }
                             if (it.status == OrderStatus.CANCELED) {
                                 cancelStatistics[it.code] = cancelStatistics.getOrDefault(it.code, 0) + 1
                             }
                         }
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日订单成功")
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日订单成功")
                     }) { e ->
                         resumeConnectWithException("【交易接口登录】查询当日订单失败：$e", e)
                     }
                     // 查询当日成交记录
-                    postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录...")
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录...")
                     runWithRetry({
                         val trades = queryTrades(useCache = false)
                         todayTrades.addAll(trades)
-                        postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录成功")
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录成功")
                     }) { e ->
                         resumeConnectWithException("【交易接口登录】查询当日成交记录失败：$e", e)
                     }
                     // 登录操作完成
                     connected = true
-                    postBrokerConnectionEvent(ConnectionEventType.TD_LOGGED_IN)
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】登录成功")
                     resumeRequests("connect", Unit)
+                    if (newTradingDayOnConnect) {
+                        newTradingDayOnConnect = false
+                        api.postBrokerEvent(BrokerEventType.NEW_TRADING_DAY, Converter.dateC2A(tradingDay))
+                    }
                 } catch (e: Exception) {  // 登录操作失败
                     e.printStackTrace()
-                    postBrokerLogEvent(LogLevel.ERROR, "【交易接口登录】发生预期外的异常：$e")
+                    api.postBrokerLogEvent(LogLevel.ERROR, "【交易接口登录】发生预期外的异常：$e")
                     resumeRequestsWithException("connect", e.message ?: e.toString())
                 }
             }
         }
 
         /**
-         * 交易前置断开连接时回调。会将 [connected] 置为 false；发送一条 [BrokerEventType.CONNECTION] 信息；异常完成所有的协程请求
+         * 交易前置断开连接时回调。会将 [connected] 置为 false；异常完成所有的协程请求
          */
         override fun OnFrontDisconnected(nReason: Int) {
             frontConnected = false
             connected = false
-            postBrokerConnectionEvent(ConnectionEventType.TD_NET_DISCONNECTED, "${getDisconnectReason(nReason)} ($nReason)")
-            val e = Exception("网络连接断开：${getDisconnectReason(nReason)} ($nReason)")
+            val msg = "【CtpTdSpi.OnFrontDisconnected】前置服务器连接断开：${getDisconnectReason(nReason)} ($nReason)"
+            api.postBrokerLogEvent(LogLevel.INFO, msg)
+            val e = Exception(msg)
             requestMap.values.forEach {
                 it.continuation.resumeWithException(e)
             }
@@ -1470,7 +1438,11 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     mdApi.codeMap.clear()
                     positions.clear()
                     cacheFile.writeText("$tradingDay\n${orderRef.get()}")
-                    postBrokerEvent(BrokerEventType.NEW_TRADING_DAY, Converter.dateC2A(tradingDay))
+                    if (hasRequest("connect")) {
+                        newTradingDayOnConnect = true
+                    } else {
+                        api.postBrokerEvent(BrokerEventType.NEW_TRADING_DAY, Converter.dateC2A(tradingDay))
+                    }
                 }
                 if (bIsLast) {
                     (request.continuation as Continuation<Unit>).resume(Unit)
@@ -1522,7 +1494,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     statusMsg = "$errorMsg ($errorCode)"
                     updateTime = LocalDateTime.now()
                 }
-                postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
+                api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
             })
         }
 
@@ -1544,7 +1516,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     statusMsg = "$errorMsg ($errorCode)"
                     updateTime = LocalDateTime.now()
                 }
-                postBrokerEvent(BrokerEventType.CANCEL_FAILED, order.deepCopy())
+                api.postBrokerEvent(BrokerEventType.CANCEL_FAILED, order)
             })
         }
 
@@ -1552,7 +1524,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
          * 订单状态更新回调。该回调会收到该账户下所有 session 的订单回报，因此需要与本 session 的订单区分处理
          */
         override fun OnRtnOrder(pOrder: CThostFtdcOrderField) {
-            scope.launch {
+            api.scope.launch {
                 val orderId = "${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"
                 var order = todayOrders[pOrder.orderRef]
                 // 如果不是本 session 发出的订单，找到或创建缓存的订单
@@ -1563,7 +1535,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (order == null) {
                         val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
                         order = Converter.orderC2A(tradingDate, pOrder, instruments[code]) { e ->
-                            postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                            api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                         }
                         ensureFullSecurityInfo(code)
                         getOrQueryTick(code).first?.calculateOrderFrozenCash(order)
@@ -1674,13 +1646,13 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                                 LocalDateTime.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${pOrder.insertTime}")
                             }
                         } catch (e: Exception) {
-                            postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                            api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                             LocalDateTime.now()
                         }
                         order.updateTime = updateTime
                     }
-                    if (oldStatus != newOrderStatus || newOrderStatus == OrderStatus.ERROR) {
-                        postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
+                    if (oldStatus != newOrderStatus) {
+                        api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
                     }
                 }
             }
@@ -1690,21 +1662,21 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
          * 成交回报回调。该回调会收到该账户下所有 session 的成交回报，因此需要与本 session 的成交回报区分处理
          */
         override fun OnRtnTrade(pTrade: CThostFtdcTradeField) {
-            scope.launch {
+            api.scope.launch {
                 var order = todayOrders[pTrade.orderRef]
                 val orderSysId = "${pTrade.exchangeID}_${pTrade.orderSysID}"
                 if (order == null || order.orderSysId != orderSysId) {
                     order = todayOrders.values.find { it.orderSysId == orderSysId }
                     if (order == null) {
-                        postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知订单的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
+                        api.postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知订单的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                     }
                 }
                 val code = "${pTrade.exchangeID}.${pTrade.instrumentID}"
                 ensureFullSecurityInfo(code)
                 val lastTick = getOrQueryTick(code).first
                 val info = lastTick?.info ?: return@launch
-                val trade = Converter.tradeC2A(tradingDate, pTrade, order?.orderId ?: orderSysId, info.name) { e ->
-                    postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
+                val trade = Converter.tradeC2A(tradingDate, pTrade, order?.orderId ?: orderSysId, order?.closePositionPrice ?: -1.0, info.name) { e ->
+                    api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
                 }
                 trade.turnover = trade.volume * trade.price * info.volumeMultiple
                 // 更新仓位信息，并判断是平今还是平昨
@@ -1831,7 +1803,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     position.todayCommission += trade.commission
                 }
                 todayTrades.add(trade)
-                postBrokerEvent(BrokerEventType.TRADE_REPORT, trade.deepCopy())
+                api.postBrokerEvent(BrokerEventType.TRADE_REPORT, trade)
                 // 更新 order 信息
                 if (order != null) {
                     order.filledVolume += trade.volume
@@ -1844,7 +1816,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         OrderStatus.FILLED
                     }
                     lastTick.calculateOrderFrozenCash(order)
-                    postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
+                    api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
                 }
             }
         }
@@ -1864,7 +1836,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 if (pOrder != null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
                     val order = Converter.orderC2A(Converter.dateC2A(pOrder.tradingDay), pOrder, instruments[code]) { e ->
-                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryOrder】Order time 解析失败：${"${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                        api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryOrder】Order time 解析失败：${"${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     reqData.results.add(order)
                 }
@@ -1909,12 +1881,12 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     if (order == null || order.orderSysId != orderSysId) {
                         order = todayOrders.values.find { it.orderSysId == orderSysId }
                         if (order == null) {
-                            postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRspQryTrade】未找到对应订单：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
+                            api.postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRspQryTrade】未找到对应订单：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
                         }
                     }
                     val code = "${pTrade.exchangeID}.${pTrade.instrumentID}"
-                    val trade = Converter.tradeC2A(Converter.dateC2A(pTrade.tradingDay), pTrade, order?.orderId ?: orderSysId, instruments[code]?.name ?: code) { e ->
-                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
+                    val trade = Converter.tradeC2A(Converter.dateC2A(pTrade.tradingDay), pTrade, order?.orderId ?: orderSysId, order?.closePositionPrice ?: -1.0, instruments[code]?.name ?: code) { e ->
+                        api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
                     }
                     reqData.results.add(trade)
                 }
@@ -1969,7 +1941,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                         dayPriceInfoQueriedCodes.add(code)
                     }
                     val tick = Converter.tickC2A(code, Converter.dateC2A(pDepthMarketData.tradingDay), pDepthMarketData, info = info, marketStatus = getInstrumentStatus(code)) { e ->
-                        postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryDepthMarketData】Tick updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
+                        api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryDepthMarketData】Tick updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
                     }
                     cachedTickMap[code] = tick
                     (request.continuation as Continuation<Tick?>).resume(tick)
@@ -1999,7 +1971,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             val reqData = request.data
             val instrument = pInstrument?.let {
                 Converter.securityC2A(tradingDate, pInstrument) { e ->
-                    postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryInstrument】Instrument 解析失败(${pInstrument.exchangeID}.${pInstrument.instrumentID})：$e")
+                    api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryInstrument】Instrument 解析失败(${pInstrument.exchangeID}.${pInstrument.instrumentID})：$e")
                 }
             }
             checkRspInfo(pRspInfo, {
@@ -2110,7 +2082,7 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                             when (it.direction) {
                                 Direction.LONG -> biPosition.long = it
                                 Direction.SHORT -> biPosition.short = it
-                                else -> postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRspQryInvestorPosition】查询到未知的持仓方向（${it.code}, ${it.direction}）")
+                                else -> api.postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRspQryInvestorPosition】查询到未知的持仓方向（${it.code}, ${it.direction}）")
                             }
                         }
                         (request.continuation as Continuation<List<Position>>).resume(posList)
@@ -2291,9 +2263,9 @@ internal class CtpTdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     }
                     // 如果是中金所期货，那么查询申报手续费
 //                    if (standardCode.startsWith(ExchangeID.CFFEX)) {
-//                        val job = scope.launch {
+//                        val job = api.scope.launch {
 //                            runWithRetry({ queryFuturesOrderCommissionRate(standardCode) }) { e ->
-//                                postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryInstrumentCommissionRate】查询期货申报手续费失败：$standardCode, $e")
+//                                api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryInstrumentCommissionRate】查询期货申报手续费失败：$standardCode, $e")
 //                            }
 //                        }
 //                        (request.data as MutableList<Job>).add(job)

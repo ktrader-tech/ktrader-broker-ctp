@@ -5,7 +5,6 @@ package org.rationalityfrontline.ktrader.broker.ctp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.rationalityfrontline.jctp.*
-import org.rationalityfrontline.kevent.KEvent
 import org.rationalityfrontline.ktrader.api.broker.*
 import org.rationalityfrontline.ktrader.api.datatype.SecurityInfo
 import org.rationalityfrontline.ktrader.api.datatype.SecurityType
@@ -19,7 +18,8 @@ import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import kotlin.math.min
 
-internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId: String) {
+internal class CtpMdApi(val api: CtpBrokerApi) {
+    val config: CtpConfig = api.config
     private val mdApi: CThostFtdcMdApi
     private val mdSpi: CtpMdSpi
     /**
@@ -50,8 +50,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     /**
      * 是否已完成登录操作（即处于可用状态）
      */
-    var connected: Boolean = false
-        private set
+    var connected: Boolean by api::mdConnected
     /**
      * 当前交易日内已订阅的合约代码集合（当交易日发生更替时上一交易日的订阅会自动失效清零）
      */
@@ -64,10 +63,6 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      * 缓存的 [Tick] 表，key 为 code，value 为 [Tick]。每当网络断开（OnFrontDisconnected）时会清空以防止出现过期缓存被查询使用的情况。当某个合约退订时，该合约的缓存 Tick 也会清空。
      */
     val lastTicks = mutableMapOf<String, Tick>()
-    /**
-     * 是否正处于测试 TickToTrade 状态
-     */
-    var isTestingTickToTrade: Boolean = false
 
     init {
         val cachePath = config.cachePath.ifBlank { "./data/ctp/" }
@@ -113,27 +108,6 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
     }
 
     /**
-     * 向 [kEvent] 发送一条 [BrokerEvent]
-     */
-    private fun postBrokerEvent(type: BrokerEventType, data: Any) {
-        kEvent.post(type, BrokerEvent(type, sourceId, data))
-    }
-
-    /**
-     * 向 [kEvent] 发送一条 [BrokerEvent].[LogEvent]
-     */
-    private fun postBrokerLogEvent(level: LogLevel, msg: String) {
-        postBrokerEvent(BrokerEventType.LOG, LogEvent(level, msg))
-    }
-
-    /**
-     * 向 [kEvent] 发送一条 [BrokerEvent].[ConnectionEvent]
-     */
-    private fun postBrokerConnectionEvent(msgType: ConnectionEventType, msg: String = "") {
-        postBrokerEvent(BrokerEventType.CONNECTION, ConnectionEvent(msgType, msg))
-    }
-
-    /**
      * 连接行情前置并自动完成登录。在无法连接至前置的情况下可能会长久阻塞。
      * 该操作不可加超时限制，因为可能在双休日等非交易时间段启动程序。
      */
@@ -142,14 +116,14 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         suspendCoroutine<Unit> { continuation ->
             val requestId = Int.MIN_VALUE // 因为 OnFrontConnected 中 requestId 会重置为 0，为防止 requestId 重复，取整数最小值
             requestMap[requestId] = RequestContinuation(requestId, continuation, "connect")
-            postBrokerLogEvent(LogLevel.INFO, "【行情接口登录】连接前置服务器...")
+            api.postBrokerLogEvent(LogLevel.INFO, "【行情接口登录】连接前置服务器...")
             mdApi.Init()
             inited = true
         }
     }
 
     /**
-     * 关闭并释放资源，会发送一条 [BrokerEventType.CONNECTION] ([ConnectionEventType.MD_NET_DISCONNECTED]) 信息
+     * 关闭并释放资源
      */
     fun close() {
         if (frontConnected) mdSpi.OnFrontDisconnected(0)
@@ -234,7 +208,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
      */
     suspend fun subscribeAllMarketData(extras: Map<String, String>? = null): List<SecurityInfo> {
         val codes = tdApi.instruments.keys
-        if (codes.isEmpty()) throw Exception("交易前置未连接，无法获得全市场合约")
+        if (codes.isEmpty()) throw IllegalStateException("交易前置未连接，无法获得全市场合约")
         return subscribeMarketData(codes, extras)
     }
 
@@ -259,7 +233,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                 val errorInfo = "${pRspInfo.errorMsg}, requestId=$nRequestID, isLast=$bIsLast"
                 val connectRequests = requestMap.values.filter { it.tag == "connect" }
                 if (connectRequests.isEmpty()) {
-                    postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspError】$errorInfo")
+                    api.postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspError】$errorInfo")
                 } else {
                     resumeRequestsWithException("connect", errorInfo)
                 }
@@ -270,28 +244,29 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         }
 
         /**
-         * 行情前置连接时回调。会将 [requestId] 置为 0；发送一条 [BrokerEventType.CONNECTION] 信息；自动请求用户登录 mdApi.ReqUserLogin（登录成功后 [connected] 才会置为 true），参见 [OnRspUserLogin]
+         * 行情前置连接时回调。会将 [requestId] 置为 0；自动请求用户登录 mdApi.ReqUserLogin（登录成功后 [connected] 才会置为 true），参见 [OnRspUserLogin]
          */
         override fun OnFrontConnected() {
             frontConnected = true
             requestId.set(0)
-            postBrokerConnectionEvent(ConnectionEventType.MD_NET_CONNECTED)
+            api.postBrokerLogEvent(LogLevel.INFO, "【行情接口登录】前置服务器已连接")
             runBlocking {
                 runWithResultCheck({ mdApi.ReqUserLogin(CThostFtdcReqUserLoginField(), nextRequestId()) }, {}, { code, info ->
-                    resumeRequestsWithException("connect", "请求用户登录失败：$info, $code")
+                    resumeRequestsWithException("connect", "【行情接口登录】请求用户登录失败：$info, $code")
                 })
             }
         }
 
         /**
-         * 行情前置断开连接时回调。会将 [connected] 置为 false；清空 [lastTicks]；发送一条 [BrokerEventType.CONNECTION] 信息；异常完成所有的协程请求
+         * 行情前置断开连接时回调。会将 [connected] 置为 false；清空 [lastTicks]；异常完成所有的协程请求
          */
         override fun OnFrontDisconnected(nReason: Int) {
             frontConnected = false
             connected = false
             lastTicks.clear()
-            postBrokerConnectionEvent(ConnectionEventType.MD_NET_DISCONNECTED, "${getDisconnectReason(nReason)} ($nReason)")
-            val e = Exception("网络连接断开：${getDisconnectReason(nReason)} ($nReason)")
+            val msg = "【CtpMdSpi.OnFrontDisconnected】前置服务器连接断开：${getDisconnectReason(nReason)} ($nReason)"
+            api.postBrokerLogEvent(LogLevel.INFO, msg)
+            val e = Exception(msg)
             requestMap.values.forEach {
                 it.continuation.resumeWithException(e)
             }
@@ -309,15 +284,15 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
         ) {
             checkRspInfo(pRspInfo, {
                 if (pRspUserLogin == null) {
-                    resumeRequestsWithException("connect", "请求用户登录失败：pRspUserLogin 为 null")
+                    resumeRequestsWithException("connect", "【CtpMdSpi.OnRspUserLogin】请求用户登录失败：pRspUserLogin 为 null")
                     return
                 }
                 connected = true
                 // 如果当日已订阅列表不为空，则说明发生了日内断网重连，自动重新订阅
                 if (subscriptions.isNotEmpty() && tradingDay == pRspUserLogin.tradingDay) {
-                    tdApi.scope.launch {
+                    api.scope.launch {
                         runWithRetry({ subscribeMarketData(subscriptions.toList(), mapOf("isForce" to "true")) }, { e ->
-                            postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情失败：$e")
+                            api.postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情失败：$e")
                         })
                     }
                 }
@@ -326,10 +301,10 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     subscriptions.clear()
                     tradingDay = pRspUserLogin.tradingDay
                 }
-                postBrokerConnectionEvent(ConnectionEventType.MD_LOGGED_IN)
+                api.postBrokerLogEvent(LogLevel.INFO, "【行情接口登录】登录成功")
                 resumeRequests("connect", Unit)
             }, { errorCode, errorMsg ->
-                resumeRequestsWithException("connect", "请求用户登录失败：$errorMsg ($errorCode)")
+                resumeRequestsWithException("connect", "【CtpMdSpi.OnRspUserLogin】请求用户登录失败：$errorMsg ($errorCode)")
             })
         }
 
@@ -343,7 +318,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             bIsLast: Boolean
         ) {
             if (pSpecificInstrument == null) {
-                resumeRequestsWithException("subscribeMarketData", "请求订阅行情失败：pSpecificInstrument 为 null")
+                resumeRequestsWithException("subscribeMarketData", "【CtpMdSpi.OnRspSubMarketData】请求订阅行情失败：pSpecificInstrument 为 null")
                 return
             }
             val instrumentId = pSpecificInstrument.instrumentID
@@ -356,7 +331,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     subscribeSet.isEmpty()
                 }
             }, { errorCode, errorMsg ->
-                resumeRequestsWithException("subscribeMarketData", "请求订阅行情失败($code)：$errorMsg ($errorCode)") { req ->
+                resumeRequestsWithException("subscribeMarketData", "【CtpMdSpi.OnRspSubMarketData】请求订阅行情失败($code)：$errorMsg ($errorCode)") { req ->
                     (req.data as MutableSet<String>).contains(instrumentId)
                 }
             })
@@ -372,7 +347,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             bIsLast: Boolean
         ) {
             if (pSpecificInstrument == null) {
-                resumeRequestsWithException("unsubscribeMarketData", "请求退订行情失败：pSpecificInstrument 为 null")
+                resumeRequestsWithException("unsubscribeMarketData", "【CtpMdSpi.OnRspUnSubMarketData】请求退订行情失败：pSpecificInstrument 为 null")
                 return
             }
             val instrumentId = pSpecificInstrument.instrumentID
@@ -386,7 +361,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
                     subscribeSet.isEmpty()
                 }
             }, { errorCode, errorMsg ->
-                resumeRequestsWithException("unsubscribeMarketData", "请求退订行情失败($code)：$errorMsg ($errorCode)") { req ->
+                resumeRequestsWithException("unsubscribeMarketData", "【CtpMdSpi.OnRspUnSubMarketData】请求退订行情失败($code)：$errorMsg ($errorCode)") { req ->
                     (req.data as MutableSet<String>).contains(instrumentId)
                 }
             })
@@ -396,14 +371,14 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
          * 行情推送回调。行情会以 [BrokerEventType.TICK] 信息发送
          */
         override fun OnRtnDepthMarketData(data: CThostFtdcDepthMarketDataField) {
-            val receiveTime: Long? = if (isTestingTickToTrade) System.nanoTime() else null
+            val receiveTime: Long? = if (api.isTestingTickToTrade) System.nanoTime() else null
             val code = getCode(data.instrumentID)
             val lastTick = lastTicks[code]
             val info = tdApi.instruments[code]
             val newTick = Converter.tickC2A(code, tdApi.tradingDate, data, lastTick, info, tdApi.getInstrumentStatus(code)) { e ->
-                postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
+                api.postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
             }
-            if (isTestingTickToTrade) {
+            if (api.isTestingTickToTrade) {
                 newTick.tttTime = receiveTime!!
             }
             if (info?.type == SecurityType.OPTIONS) {
@@ -411,7 +386,7 @@ internal class CtpMdApi(val config: CtpConfig, val kEvent: KEvent, val sourceId:
             }
             lastTicks[code] = newTick
             // 过滤掉订阅时自动推送的第一笔数据
-            if (lastTick != null) postBrokerEvent(BrokerEventType.TICK, newTick)
+            if (lastTick != null && api.tdConnected) api.postBrokerEvent(BrokerEventType.TICK, newTick)
         }
     }
 }

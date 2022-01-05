@@ -177,3 +177,102 @@ object ExchangeID {
     const val DCE = "DCE"
     const val CZCE = "CZCE"
 }
+
+/**
+ * 手续费率
+ * @param code 证券代码
+ * @param openRatioByMoney 开仓手续费率（按成交额）
+ * @param openRatioByVolume 开仓手续费（按手数）
+ * @param closeRatioByMoney 平仓手续费率（按成交额）
+ * @param closeRatioByVolume 平仓手续费（按手数）
+ * @param closeTodayRatioByMoney 平今仓手续费率（按成交额）
+ * @param closeTodayRatioByVolume 平今仓手续费（按手数）
+ * @param orderInsertFeeByVolume 报单手续费（按手数），目前仅限中金所股指期货，全部为 0.0
+ * @param orderInsertFeeByTrade 报单手续费（按订单），目前仅限中金所股指期货，全部为 1.0
+ * @param orderCancelFeeByVolume 撤单手续费（按手数），目前仅限中金所股指期货，全部为 0.0
+ * @param orderCancelFeeByTrade 撤单手续费（按订单），目前仅限中金所股指期货，全部为 1.0
+ * @param optionsStrikeRatioByMoney 期权行权手续费率（按金额）
+ * @param optionsStrikeRatioByVolume 期权行权手续费（按手数）
+ * */
+data class CommissionRate(
+    var code: String,
+    var openRatioByMoney: Double,
+    var openRatioByVolume: Double,
+    var closeRatioByMoney: Double,
+    var closeRatioByVolume: Double,
+    var closeTodayRatioByMoney: Double,
+    var closeTodayRatioByVolume: Double,
+    var orderInsertFeeByTrade: Double = 0.0,
+    var orderInsertFeeByVolume: Double = 0.0,
+    var orderCancelFeeByTrade: Double = 0.0,
+    var orderCancelFeeByVolume: Double = 0.0,
+    var optionsStrikeRatioByMoney: Double = 0.0,
+    var optionsStrikeRatioByVolume: Double = 0.0,
+    override var extras: MutableMap<String, String>? = null,
+) : ExtrasEntity {
+    /**
+     * 返回一份自身的完全拷贝
+     */
+    fun deepCopy(): CommissionRate {
+        return copy(extras = extras?.toMutableMap())
+    }
+
+    /**
+     * 将手续费率处理后赋值给 [info] 的对应字段
+     */
+    fun copyFieldsToSecurityInfo(info: SecurityInfo) {
+        info.openCommissionRate = if (openRatioByVolume > 0.1) openRatioByVolume else openRatioByMoney
+        info.closeCommissionRate = if (closeRatioByVolume > 0.1) closeRatioByVolume else closeRatioByMoney
+        info.closeTodayCommissionRate = if (closeTodayRatioByVolume > 0.1) closeTodayRatioByVolume else closeTodayRatioByMoney
+    }
+}
+
+/**
+ * 期货/期权保证金率
+ * @param code 证券代码
+ * @param longMarginRatioByMoney 多头保证金率（按金额）。当证券为期权时表示期权卖方固定保证金（[optionsFixedMargin]）
+ * @param longMarginRatioByVolume 多头保证金（按手数），目前全部为 0.0。当证券为期权时表示期权卖方交易所固定保证金（[optionsExchangeFixedMargin]）
+ * @param shortMarginRatioByMoney 空头保证金率（按金额）。当证券为期权时表示期权卖方最小保证金（[optionsMinMargin]）
+ * @param shortMarginRatioByVolume 空头保证金（按手数），目前全部为 0.0。当证券为期权时表示期权卖方交易所最小保证金（[optionsExchangeMinMargin]）
+ * @property optionsFixedMargin 期权卖方固定保证金（实际字段为 [longMarginRatioByMoney]）
+ * @property optionsMinMargin 期权卖方最小保证金（实际字段为 [shortMarginRatioByMoney]），目前全部为 0.0
+ * @property optionsExchangeFixedMargin 期权卖方交易所固定保证金（实际字段为 [longMarginRatioByVolume]）
+ * @property optionsExchangeMinMargin 期权卖方交易所最小保证金（实际字段为 [shortMarginRatioByVolume]），目前全部为 0.0
+ */
+data class MarginRate(
+    var code: String,
+    var longMarginRatioByMoney: Double,
+    var longMarginRatioByVolume: Double,
+    var shortMarginRatioByMoney: Double,
+    var shortMarginRatioByVolume: Double,
+    override var extras: MutableMap<String, String>? = null,
+) : ExtrasEntity {
+    var optionsFixedMargin: Double by ::longMarginRatioByMoney
+    var optionsMinMargin: Double by ::shortMarginRatioByMoney
+    var optionsExchangeFixedMargin: Double by ::longMarginRatioByVolume
+    var optionsExchangeMinMargin: Double by ::shortMarginRatioByVolume
+
+    /**
+     * 返回一份自身的完全拷贝
+     */
+    fun deepCopy(): MarginRate {
+        return copy(extras = extras?.toMutableMap())
+    }
+
+    /**
+     * 将保证金率处理后赋值给 [info] 的对应字段
+     */
+    fun copyFieldsToSecurityInfo(info: SecurityInfo) {
+        when (info.type) {
+            SecurityType.FUTURES -> {
+                info.marginRateLong = longMarginRatioByMoney
+                info.marginRateShort = shortMarginRatioByMoney
+            }
+            SecurityType.OPTIONS -> {
+                info.optionsFixedMargin = optionsFixedMargin
+                info.optionsMinMargin = optionsMinMargin
+            }
+            else -> Unit
+        }
+    }
+}

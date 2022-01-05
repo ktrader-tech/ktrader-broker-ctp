@@ -224,7 +224,14 @@ internal object Converter {
         }
     }
 
-    fun tradeC2A(tradingDay: LocalDate, tradeField: CThostFtdcTradeField, orderId: String, name: String, onTimeParseError: (Exception) -> Unit): Trade {
+    fun tradeC2A(
+        tradingDay: LocalDate,
+        tradeField: CThostFtdcTradeField,
+        orderId: String,
+        closePositionPrice: Double,
+        name: String,
+        onTimeParseError: (Exception) -> Unit
+    ): Trade {
         val tradeTime = try {
             val date = tradeField.tradeDate
             val updateTimeStr = "${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${tradeField.tradeTime}"
@@ -241,6 +248,7 @@ internal object Converter {
             code = "${tradeField.exchangeID}.${tradeField.instrumentID}",
             name = name,
             price = tradeField.price,
+            closePositionPrice = closePositionPrice,
             volume = tradeField.volume,
             turnover = 0.0,
             direction = directionC2A(tradeField.direction),

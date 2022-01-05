@@ -26,8 +26,6 @@ private fun testCtpApi(brokerExtension: BrokerExtension) {
         "UserProductInfo" to "",  //用户产品信息
         "CachePath" to "./data/ctp",  // 本地缓存文件存储目录
         "Timeout" to "6000",  // 接口调用超时时间（单位：毫秒）
-        "DisableAutoSubscribe" to "false",  // 是否禁用自动订阅
-        "DisableFeeCalculation" to "false",  // 是否禁用费用计算
     )
     // 创建 CtpBrokerApi 实例
     val api = brokerExtension.createApi(config)
@@ -39,7 +37,7 @@ private fun testCtpApi(brokerExtension: BrokerExtension) {
             // Tick 推送
             BrokerEventType.TICK -> {
                 val tick = brokerEvent.data as Tick
-                println("Tick 推送：${tick.code}, ${tick.lastPrice}, ${tick.time}")
+                println("Tick 推送：${tick.code}, ${tick.price}, ${tick.time}")
             }
             // 其它事件（网络连接、订单回报、成交回报等）
             else -> {
@@ -61,7 +59,7 @@ private fun testCtpApi(brokerExtension: BrokerExtension) {
 
 fun main() {
     println("------------ 启动 ------------")
-    val deleteOnFinish = false  // 是否运行完后删除插件，可以用来测试是否存在内存泄露
+    val deleteOnFinish = false  // 是否运行完后删除插件
     val pluginManager = object : DefaultPluginManager(Path.of("./plugins/")) {
         override fun createExtensionFactory(): ExtensionFactory {
             return SingletonExtensionFactory()
