@@ -59,9 +59,18 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
     val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     override var isTestingTickToTrade: Boolean = false
-        private set
+        private set(value) {
+            if (field == value) return
+            field = value
+            postBrokerEvent(BrokerEventType.CUSTOM_EVENT, CustomEvent("TICK_TO_TRADE", value.toString()))
+        }
 
     override var dataApi: DataApi? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            postBrokerEvent(BrokerEventType.CUSTOM_EVENT, CustomEvent("DATA_API", value?.account ?: ""))
+        }
 
     init {
         mdApi = CtpMdApi(this)
