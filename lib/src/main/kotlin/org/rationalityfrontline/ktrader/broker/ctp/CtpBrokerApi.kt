@@ -103,6 +103,7 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
     }
 
     override suspend fun close(extras: Map<String, String>?) {
+        if (brokerStatus != BrokerStatus.CONNECTED && brokerStatus != BrokerStatus.CONNECTING) return
         brokerStatus = BrokerStatus.CLOSING
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.close】开始关闭")
         tdApi.close()
