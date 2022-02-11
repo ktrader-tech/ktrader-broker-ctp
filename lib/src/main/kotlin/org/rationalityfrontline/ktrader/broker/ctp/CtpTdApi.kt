@@ -695,7 +695,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         if (mdApi.connected) {
             tick = mdApi.lastTicks[code]
             // 如果缓存的 tick 为空，说明未订阅该合约，那么订阅该合约以方便后续计算
-            if (tick == null) {
+            if (tick == null && code !in mdApi.subscriptions) {
                 try {
                     api.postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.getOrQueryTick】自动订阅行情：$code")
                     mdApi.subscribeMarketData(listOf(code))
