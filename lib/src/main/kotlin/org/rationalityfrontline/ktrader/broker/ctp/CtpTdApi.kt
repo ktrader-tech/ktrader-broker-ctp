@@ -675,7 +675,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             })
         }
         val info = instruments[code]
-        if (info?.type == SecurityType.OPTIONS && resultTick != null) {
+        if (info?.type == SecurityType.OPTIONS && resultTick != null && !info.optionsUnderlyingCode.startsWith("CFFEX.IO")) {
             resultTick.optionsUnderlyingPrice = getOrQueryTick(info.optionsUnderlyingCode).first?.price ?: 0.0
         }
         if (info != null && extras?.get("ensureFullInfo") != "false") {

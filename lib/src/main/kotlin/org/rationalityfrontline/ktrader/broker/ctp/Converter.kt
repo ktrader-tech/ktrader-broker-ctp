@@ -85,9 +85,7 @@ internal object Converter {
         val updateTime = try {
             LocalTime.parse("${tickField.updateTime}.${tickField.updateMillisec}").atDate(LocalDate.now())
         } catch (e: Exception) {
-            if ("${tickField.updateTime}.${tickField.updateMillisec}" != ".0") {  // 当 CtpTdApi 在闭市时段查询股指期权时出现的特殊情况
-                onTimeParseError(e)
-            }
+            onTimeParseError(e)
             LocalDateTime.now()
         }
         val lastPrice = formatDouble(tickField.lastPrice)
