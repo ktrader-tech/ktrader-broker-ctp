@@ -725,17 +725,15 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     /**
      * 查询某一特定合约的信息。
      * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
-     * 如果之前没查过，会耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
+     * 如果之前没查过，会耗时。useCache 参数无效，总是使用缓存】
      */
     suspend fun querySecurity(code: String, useCache: Boolean = true, extras: Map<String, String>? = null): SecurityInfo? {
-        if (useCache) {
-            val cachedInstrument = instruments[code]
-            if (cachedInstrument != null) {
-                if (extras?.get("ensureFullInfo") != "false") {
-                    ensureFullSecurityInfo(code)
-                }
-                return cachedInstrument
+        val cachedInstrument = instruments[code]
+        if (cachedInstrument != null) {
+            if (extras?.get("ensureFullInfo") != "false") {
+                ensureFullSecurityInfo(code)
             }
+            return cachedInstrument
         }
         val (exchangeId, instrumentId) = parseCode(code)
         val qryField = CThostFtdcQryInstrumentField().apply {
