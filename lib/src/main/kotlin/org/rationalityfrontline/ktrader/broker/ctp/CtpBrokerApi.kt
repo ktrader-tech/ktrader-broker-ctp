@@ -97,9 +97,15 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         if (brokerStatus != BrokerStatus.CREATED) return
         brokerStatus = BrokerStatus.CONNECTING
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】开始连接")
-        mdApi.connect()
-        tdApi.connect()
-        postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】连接成功")
+        try {
+            mdApi.connect()
+            tdApi.connect()
+            postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】连接成功")
+        } catch (e: Exception) {
+            e.printStackTrace()
+            postBrokerLogEvent(LogLevel.ERROR, "【CtpBrokerApi.connect】连接失败：${e.message}")
+            close(extras)
+        }
     }
 
     override suspend fun close(extras: Map<String, String>?) {

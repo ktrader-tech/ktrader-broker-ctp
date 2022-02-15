@@ -1108,6 +1108,11 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     }
 
     /**
+     * 账户连接操作因异常而中断失败
+     */
+    private class ConnectAbortedException(msg: String) : Exception(msg)
+
+    /**
      * Ctp TdApi 的回调类
      */
     private inner class CtpTdSpi : CThostFtdcTraderSpi() {
@@ -1225,6 +1230,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     e.printStackTrace()
                     api.postBrokerLogEvent(LogLevel.ERROR, errorInfo)
                     resumeRequestsWithException("connect", errorInfo)
+                    throw ConnectAbortedException(errorInfo)
                 }
                 try {
                     // 请求客户端认证
@@ -1345,7 +1351,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         newTradingDayOnConnect = false
                         api.postBrokerEvent(BrokerEventType.NEW_TRADING_DAY, Converter.dateC2A(tradingDay))
                     }
-                } catch (e: Exception) {  // 登录操作失败
+                } catch (e: ConnectAbortedException) {  // 登录操作因已知原因中断，什么都不做
+                } catch (e: Exception) {  // 登录操作因未知原因失败
                     e.printStackTrace()
                     api.postBrokerLogEvent(LogLevel.ERROR, "【交易接口登录】发生预期外的异常：$e")
                     resumeRequestsWithException("connect", e.message ?: e.toString())
