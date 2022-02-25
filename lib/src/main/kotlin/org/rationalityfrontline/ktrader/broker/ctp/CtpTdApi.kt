@@ -661,9 +661,10 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             if (cachedTick != null) {
                 cachedTick.status = getInstrumentStatus(code)
                 cachedTickMap[code] = cachedTick
-                resultTick =  cachedTick
+                resultTick = cachedTick
             }
-        } else {
+        }
+        if (resultTick == null) {
             val qryField = CThostFtdcQryDepthMarketDataField().apply {
                 instrumentID = parseCode(code).second
             }
@@ -674,12 +675,14 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 }
             })
         }
-        val info = instruments[code]
-        if (info?.type == SecurityType.OPTIONS && resultTick != null && !info.optionsUnderlyingCode.startsWith("CFFEX.IO")) {
-            resultTick.optionsUnderlyingPrice = getOrQueryTick(info.optionsUnderlyingCode).first?.price ?: 0.0
-        }
-        if (info != null && extras?.get("ensureFullInfo") != "false") {
-            ensureFullSecurityInfo(code)
+        if (resultTick != null) {
+            val info = instruments[code]
+            if (info?.type == SecurityType.OPTIONS && !info.optionsUnderlyingCode.startsWith("CFFEX.IO")) {
+                resultTick.optionsUnderlyingPrice = getOrQueryTick(info.optionsUnderlyingCode).first?.price ?: 0.0
+            }
+            if (info != null && extras?.get("ensureFullInfo") != "false") {
+                ensureFullSecurityInfo(code)
+            }
         }
         return resultTick
     }
