@@ -1696,7 +1696,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 tradingDate,
                 pTrade,
                 order?.orderId ?: orderSysId,
-                order?.closePositionPrice ?: -1.0,
+                order?.closePositionPrice ?: 0.0,
                 info.name,
             ) { e ->
                 api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
@@ -1910,7 +1910,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         }
                     }
                     val code = "${pTrade.exchangeID}.${pTrade.instrumentID}"
-                    val trade = Converter.tradeC2A(Converter.dateC2A(pTrade.tradingDay), pTrade, order?.orderId ?: orderSysId, order?.closePositionPrice ?: -1.0, instruments[code]?.name ?: code) { e ->
+                    val trade = Converter.tradeC2A(Converter.dateC2A(pTrade.tradingDay), pTrade, order?.orderId ?: orderSysId, order?.closePositionPrice ?: 0.0, instruments[code]?.name ?: code) { e ->
                         api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
                     }
                     reqData.results.add(trade)
