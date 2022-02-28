@@ -1532,136 +1532,141 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
          * 订单状态更新回调。该回调会收到该账户下所有 session 的订单回报，因此需要与本 session 的订单区分处理
          */
         override fun OnRtnOrder(pOrder: CThostFtdcOrderField) {
-            api.scope.launch {
-                val orderId = "${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"
-                var order = todayOrders[pOrder.orderRef]
-                // 如果不是本 session 发出的订单，找到或创建缓存的订单
-                if (order == null || orderId != order.orderId) {
-                    // 首先检查是否已缓存过
-                    order = todayOrders[orderId]
-                    // 如果是第一次接收回报，则创建并缓存该订单，之后局部变量 order 不为 null
-                    if (order == null) {
-                        val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
-                        order = Converter.orderC2A(tradingDate, pOrder, instruments[code]) { e ->
-                            api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
-                        }
+            val orderId = "${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"
+            var order = todayOrders[pOrder.orderRef]
+            // 如果不是本 session 发出的订单，找到或创建缓存的订单
+            if (order == null || orderId != order.orderId) {
+                // 首先检查是否已缓存过
+                order = todayOrders[orderId]
+                // 如果是第一次接收回报，则创建并缓存该订单，之后局部变量 order 不为 null
+                if (order == null) {
+                    val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
+                    order = Converter.orderC2A(tradingDate, pOrder, instruments[code]) { e ->
+                        api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                    }
+                    api.scope.launch {
                         ensureFullSecurityInfo(code)
-                        getOrQueryTick(code).first?.calculateOrderFrozenCash(order)
-                        todayOrders[orderId] = order
-                        when (order.status) {
-                            OrderStatus.SUBMITTING,
-                            OrderStatus.ACCEPTED,
-                            OrderStatus.PARTIALLY_FILLED -> insertUnfinishedOrder(order)
-                            else -> Unit
-                        }
+                    }
+                    val tick = mdApi.lastTicks[code]
+                    if (tick == null) {
+                        instruments[code]?.calculateOrderFrozenCash(order)
+                    } else {
+                        tick.calculateOrderFrozenCash(order)
+                    }
+                    todayOrders[orderId] = order
+                    when (order.status) {
+                        OrderStatus.SUBMITTING,
+                        OrderStatus.ACCEPTED,
+                        OrderStatus.PARTIALLY_FILLED -> insertUnfinishedOrder(order)
+                        else -> Unit
                     }
                 }
-                // 更新 orderSysId
-                if (pOrder.orderSysID.isNotEmpty()) {
-                    order.orderSysId = "${pOrder.exchangeID}_${pOrder.orderSysID}"
+            }
+            // 更新 orderSysId
+            if (pOrder.orderSysID.isNotEmpty()) {
+                order.orderSysId = "${pOrder.exchangeID}_${pOrder.orderSysID}"
+            }
+            val oldStatus = order.status
+            val oldCommission = order.commission
+            // 判定订单目前的状态
+            val newOrderStatus = when (pOrder.orderSubmitStatus) {
+                THOST_FTDC_OSS_InsertRejected -> {
+                    removeUnfinishedOrder(order)
+                    OrderStatus.ERROR
                 }
-                val oldStatus = order.status
-                val oldCommission = order.commission
-                // 判定订单目前的状态
-                val newOrderStatus = when (pOrder.orderSubmitStatus) {
-                    THOST_FTDC_OSS_InsertRejected -> {
+                THOST_FTDC_OSS_CancelRejected,
+                THOST_FTDC_OSS_ModifyRejected -> {
+                    order.status
+                }
+                else -> when (pOrder.orderStatus) {
+                    THOST_FTDC_OST_Unknown -> OrderStatus.SUBMITTING
+                    THOST_FTDC_OST_NoTradeQueueing -> OrderStatus.ACCEPTED
+                    THOST_FTDC_OST_PartTradedQueueing -> OrderStatus.PARTIALLY_FILLED
+                    THOST_FTDC_OST_AllTraded -> {
+                        removeUnfinishedOrder(order)
+                        OrderStatus.FILLED
+                    }
+                    THOST_FTDC_OST_Canceled -> {
+                        removeUnfinishedOrder(order)
+                        cancelStatistics[order.code] = cancelStatistics.getOrDefault(order.code, 0) + 1
+                        OrderStatus.CANCELED
+                    }
+                    else -> {
                         removeUnfinishedOrder(order)
                         OrderStatus.ERROR
                     }
-                    THOST_FTDC_OSS_CancelRejected,
-                    THOST_FTDC_OSS_ModifyRejected -> {
-                        order.status
+                }
+            }
+            order.apply {
+                status = newOrderStatus
+                statusMsg = pOrder.statusMsg
+                // 如果是中金所，那么计算报单/撤单手续费
+                if (pOrder.exchangeID == ExchangeID.CFFEX && instruments[code]?.type == SecurityType.FUTURES) {
+                    when (status) {
+                        OrderStatus.ACCEPTED,
+                        OrderStatus.PARTIALLY_FILLED,
+                        OrderStatus.FILLED -> {
+                            if (!insertFeeCalculated) {
+                                commission += volume
+                                insertFeeCalculated = true
+                            }
+                        }
+                        OrderStatus.CANCELED -> {
+                            if (!cancelFeeCalculated) {
+                                commission += volume
+                                cancelFeeCalculated = true
+                            }
+                        }
+                        else -> Unit
                     }
-                    else -> when (pOrder.orderStatus) {
-                        THOST_FTDC_OST_Unknown -> OrderStatus.SUBMITTING
-                        THOST_FTDC_OST_NoTradeQueueing -> OrderStatus.ACCEPTED
-                        THOST_FTDC_OST_PartTradedQueueing -> OrderStatus.PARTIALLY_FILLED
-                        THOST_FTDC_OST_AllTraded -> {
-                            removeUnfinishedOrder(order)
-                            OrderStatus.FILLED
-                        }
-                        THOST_FTDC_OST_Canceled -> {
-                            removeUnfinishedOrder(order)
-                            cancelStatistics[order.code] = cancelStatistics.getOrDefault(order.code, 0) + 1
-                            OrderStatus.CANCELED
-                        }
-                        else -> {
-                            removeUnfinishedOrder(order)
-                            OrderStatus.ERROR
+                    // 如果有申报手续费，加到 position 的手续费统计中
+                    if (oldCommission != commission) {
+                        val position = queryCachedPosition(order.code, order.direction, order.offset != OrderOffset.OPEN)
+                        position?.apply {
+                            todayCommission += commission - oldCommission
                         }
                     }
                 }
-                order.apply {
-                    status = newOrderStatus
-                    statusMsg = pOrder.statusMsg
-                    // 如果是中金所，那么计算报单/撤单手续费
-                    if (pOrder.exchangeID == ExchangeID.CFFEX && instruments[code]?.type == SecurityType.FUTURES) {
-                        when (status) {
-                            OrderStatus.ACCEPTED,
-                            OrderStatus.PARTIALLY_FILLED,
-                            OrderStatus.FILLED -> {
-                                if (!insertFeeCalculated) {
-                                    commission += volume
-                                    insertFeeCalculated = true
-                                }
+            }
+            // 仅发送与成交不相关的订单状态更新回报，成交相关的订单状态更新回报会在 OnRtnTrade 中发出，以确保成交回报先于状态回报
+            if (newOrderStatus != OrderStatus.PARTIALLY_FILLED && newOrderStatus != OrderStatus.FILLED) {
+                // 如果是平仓，更新仓位冻结及剩余可平信息
+                if (order.offset != OrderOffset.OPEN) {
+                    val position = queryCachedPosition(order.code, order.direction, true)
+                    if (position != null) {
+                        when (newOrderStatus) {
+                            OrderStatus.ACCEPTED -> {
+                                position.frozenVolume += order.volume
                             }
-                            OrderStatus.CANCELED -> {
-                                if (!cancelFeeCalculated) {
-                                    commission += volume
-                                    cancelFeeCalculated = true
+                            OrderStatus.CANCELED,
+                            OrderStatus.ERROR -> {
+                                if (oldStatus != OrderStatus.ERROR && oldStatus != OrderStatus.CANCELED) {
+                                    val restVolume = order.volume - pOrder.volumeTraded
+                                    position.frozenVolume -= restVolume
                                 }
                             }
                             else -> Unit
                         }
-                        // 如果有申报手续费，加到 position 的手续费统计中
-                        if (oldCommission != commission) {
-                            val position = queryCachedPosition(order.code, order.direction, order.offset != OrderOffset.OPEN)
-                            position?.apply {
-                                todayCommission += commission - oldCommission
-                            }
-                        }
                     }
                 }
-                // 仅发送与成交不相关的订单状态更新回报，成交相关的订单状态更新回报会在 OnRtnTrade 中发出，以确保成交回报先于状态回报
-                if (newOrderStatus != OrderStatus.PARTIALLY_FILLED && newOrderStatus != OrderStatus.FILLED) {
-                    // 如果是平仓，更新仓位冻结及剩余可平信息
-                    if (order.offset != OrderOffset.OPEN) {
-                        val position = queryCachedPosition(order.code, order.direction, true)
-                        if (position != null) {
-                            when (newOrderStatus) {
-                                OrderStatus.ACCEPTED -> {
-                                    position.frozenVolume += order.volume
-                                }
-                                OrderStatus.CANCELED,
-                                OrderStatus.ERROR -> {
-                                    if (oldStatus != OrderStatus.ERROR && oldStatus != OrderStatus.CANCELED) {
-                                        val restVolume = order.volume - pOrder.volumeTraded
-                                        position.frozenVolume -= restVolume
-                                    }
-                                }
-                                else -> Unit
-                            }
+                if (newOrderStatus == OrderStatus.ERROR) {
+                    order.updateTime = LocalDateTime.now()
+                } else {
+                    val updateTime = try {
+                        if (newOrderStatus == OrderStatus.CANCELED) {
+                            LocalTime.parse(pOrder.cancelTime).atDate(LocalDate.now())
+                        } else {
+                            val date = pOrder.insertDate
+                            LocalDateTime.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${pOrder.insertTime}")
                         }
+                    } catch (e: Exception) {
+                        api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
+                        LocalDateTime.now()
                     }
-                    if (newOrderStatus == OrderStatus.ERROR) {
-                        order.updateTime = LocalDateTime.now()
-                    } else {
-                        val updateTime = try {
-                            if (newOrderStatus == OrderStatus.CANCELED) {
-                                LocalTime.parse(pOrder.cancelTime).atDate(LocalDate.now())
-                            } else {
-                                val date = pOrder.insertDate
-                                LocalDateTime.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${pOrder.insertTime}")
-                            }
-                        } catch (e: Exception) {
-                            api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
-                            LocalDateTime.now()
-                        }
-                        order.updateTime = updateTime
-                    }
-                    if (oldStatus != newOrderStatus) {
-                        api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
-                    }
+                    order.updateTime = updateTime
+                }
+                if (oldStatus != newOrderStatus) {
+                    api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
                 }
             }
         }
@@ -1670,162 +1675,174 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
          * 成交回报回调。该回调会收到该账户下所有 session 的成交回报，因此需要与本 session 的成交回报区分处理
          */
         override fun OnRtnTrade(pTrade: CThostFtdcTradeField) {
+            var order = todayOrders[pTrade.orderRef]
+            val orderSysId = "${pTrade.exchangeID}_${pTrade.orderSysID}"
+            if (order == null || order.orderSysId != orderSysId) {
+                order = todayOrders.values.find { it.orderSysId == orderSysId }
+                if (order == null) {
+                    api.postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知订单的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
+                }
+            }
+            val code = "${pTrade.exchangeID}.${pTrade.instrumentID}"
+            val info = instruments[code]
+            if (info == null) {
+                api.postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知标的的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
+                return
+            }
             api.scope.launch {
-                var order = todayOrders[pTrade.orderRef]
-                val orderSysId = "${pTrade.exchangeID}_${pTrade.orderSysID}"
-                if (order == null || order.orderSysId != orderSysId) {
-                    order = todayOrders.values.find { it.orderSysId == orderSysId }
-                    if (order == null) {
-                        api.postBrokerLogEvent(LogLevel.WARNING, "【CtpTdSpi.OnRtnTrade】收到未知订单的成交回报：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}")
-                    }
-                }
-                val code = "${pTrade.exchangeID}.${pTrade.instrumentID}"
                 ensureFullSecurityInfo(code)
-                val lastTick = getOrQueryTick(code).first
-                val info = lastTick?.info ?: return@launch
-                val trade = Converter.tradeC2A(tradingDate, pTrade, order?.orderId ?: orderSysId, order?.closePositionPrice ?: -1.0, info.name) { e ->
-                    api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
+            }
+            val trade = Converter.tradeC2A(
+                tradingDate,
+                pTrade,
+                order?.orderId ?: orderSysId,
+                order?.closePositionPrice ?: -1.0,
+                info.name,
+            ) { e ->
+                api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
+            }
+            val lastTick = mdApi.lastTicks[code]
+            trade.turnover = trade.volume * trade.price * info.volumeMultiple
+            // 更新仓位信息，并判断是平今还是平昨
+            val biPosition = positions.getOrPut(trade.code) { BiPosition() }
+            val position: Position? = when {
+                trade.direction == Direction.LONG && trade.offset == OrderOffset.OPEN ||
+                        trade.direction == Direction.SHORT && trade.offset != OrderOffset.OPEN -> {
+                    if (biPosition.long == null) {
+                        biPosition.long = Position(
+                            config.investorId, tradingDate,
+                            trade.code, Direction.LONG, 0, 0, 0, 0,
+                            0, 0,0, 0.0, 0.0
+                        ).apply {
+                            info.copyFieldsToPosition(this)
+                        }
+                    }
+                    biPosition.long
                 }
-                trade.turnover = trade.volume * trade.price * info.volumeMultiple
-                // 更新仓位信息，并判断是平今还是平昨
-                val biPosition = positions.getOrPut(trade.code) { BiPosition() }
-                val position: Position? = when {
-                    trade.direction == Direction.LONG && trade.offset == OrderOffset.OPEN ||
-                            trade.direction == Direction.SHORT && trade.offset != OrderOffset.OPEN -> {
-                        if (biPosition.long == null) {
-                            biPosition.long = Position(
-                                config.investorId, tradingDate,
-                                trade.code, Direction.LONG, 0, 0, 0, 0,
-                                0, 0,0, 0.0, 0.0
-                            ).apply {
-                                ensureFullSecurityInfo(code)
-                                info.copyFieldsToPosition(this)
+                trade.direction == Direction.SHORT && trade.offset == OrderOffset.OPEN ||
+                        trade.direction == Direction.LONG && trade.offset != OrderOffset.OPEN -> {
+                    if (biPosition.short == null) {
+                        biPosition.short = Position(
+                            config.investorId, tradingDate,
+                            trade.code, Direction.SHORT, 0, 0, 0, 0,
+                            0, 0, 0, 0.0, 0.0
+                        ).apply {
+                            info.copyFieldsToPosition(this)
+                        }
+                    }
+                    biPosition.short
+                }
+                else -> null
+            }
+            if (position != null) {
+                // 如果是开仓，那么很简单，直接更新仓位
+                if (trade.offset == OrderOffset.OPEN) {
+                    position.todayVolume += trade.volume
+                    position.volume += trade.volume
+                    position.todayOpenVolume += trade.volume
+                    position.openCost += trade.turnover
+                } else { // 如果不是开仓，则判断是平今还是平昨，上期所按 order 指令，其它三所涉及平今手续费减免时优先平今，否则优先平昨
+                    var todayClosed = 0
+                    var yesterdayClosed = 0
+                    when (pTrade.exchangeID) {
+                        ExchangeID.SHFE, ExchangeID.INE -> {
+                            trade.offset = order?.offset ?: trade.offset
+                            if (trade.offset == OrderOffset.CLOSE) {
+                                trade.offset = OrderOffset.CLOSE_YESTERDAY
+                            }
+                            when (trade.offset) {
+                                OrderOffset.CLOSE_TODAY -> todayClosed = trade.volume
+                                OrderOffset.CLOSE_YESTERDAY -> yesterdayClosed = trade.volume
+                                else -> Unit
                             }
                         }
-                        biPosition.long
-                    }
-                    trade.direction == Direction.SHORT && trade.offset == OrderOffset.OPEN ||
-                            trade.direction == Direction.LONG && trade.offset != OrderOffset.OPEN -> {
-                        if (biPosition.short == null) {
-                            biPosition.short = Position(
-                                config.investorId, tradingDate,
-                                trade.code, Direction.SHORT, 0, 0, 0, 0,
-                                0, 0, 0, 0.0, 0.0
-                            ).apply {
-                                ensureFullSecurityInfo(code)
-                                info.copyFieldsToPosition(this)
-                            }
-                        }
-                        biPosition.short
-                    }
-                    else -> null
-                }
-                if (position != null) {
-                    // 如果是开仓，那么很简单，直接更新仓位
-                    if (trade.offset == OrderOffset.OPEN) {
-                        position.todayVolume += trade.volume
-                        position.volume += trade.volume
-                        position.todayOpenVolume += trade.volume
-                        position.openCost += trade.turnover
-                    } else { // 如果不是开仓，则判断是平今还是平昨，上期所按 order 指令，其它三所涉及平今手续费减免时优先平今，否则优先平昨
-                        var todayClosed = 0
-                        var yesterdayClosed = 0
-                        when (pTrade.exchangeID) {
-                            ExchangeID.SHFE, ExchangeID.INE -> {
-                                trade.offset = order?.offset ?: trade.offset
-                                if (trade.offset == OrderOffset.CLOSE) {
-                                    trade.offset = OrderOffset.CLOSE_YESTERDAY
-                                }
-                                when (trade.offset) {
-                                    OrderOffset.CLOSE_TODAY -> todayClosed = trade.volume
-                                    OrderOffset.CLOSE_YESTERDAY -> yesterdayClosed = trade.volume
-                                    else -> Unit
-                                }
-                            }
-                            else -> {
-                                // 依据手续费率判断是否优先平今
-                                val todayFirst = info.closeTodayCommissionRate < info.closeCommissionRate
-                                // 依据仓位及是否优先平今判断是否实际平今
-                                val yesterdayVolume = position.yesterdayVolume()
-                                if (todayFirst) {
-                                    when {
-                                        // 全部平今
-                                        trade.volume <= position.todayVolume -> {
-                                            trade.offset = OrderOffset.CLOSE_TODAY
-                                            todayClosed = trade.volume
-                                        }
-                                        // 全部平昨
-                                        position.todayVolume == 0 && yesterdayVolume >= trade.volume -> {
-                                            trade.offset = OrderOffset.CLOSE_YESTERDAY
-                                            yesterdayClosed = trade.volume
-                                        }
-                                        // 部分平今部分平昨
-                                        trade.volume <= position.volume -> {
-                                            trade.offset = OrderOffset.CLOSE
-                                            todayClosed = position.todayVolume
-                                            yesterdayClosed = trade.volume - position.todayVolume
-                                        }
+                        else -> {
+                            // 依据手续费率判断是否优先平今
+                            val todayFirst = info.closeTodayCommissionRate < info.closeCommissionRate
+                            // 依据仓位及是否优先平今判断是否实际平今
+                            val yesterdayVolume = position.yesterdayVolume()
+                            if (todayFirst) {
+                                when {
+                                    // 全部平今
+                                    trade.volume <= position.todayVolume -> {
+                                        trade.offset = OrderOffset.CLOSE_TODAY
+                                        todayClosed = trade.volume
                                     }
-                                } else {
-                                    when {
-                                        // 全部平昨
-                                        trade.volume <= yesterdayVolume -> {
-                                            trade.offset = OrderOffset.CLOSE_YESTERDAY
-                                            yesterdayClosed = trade.volume
-                                        }
-                                        // 全部平今
-                                        yesterdayVolume == 0 && trade.volume <= position.todayVolume -> {
-                                            trade.offset = OrderOffset.CLOSE_TODAY
-                                            todayClosed = trade.volume
-                                        }
-                                        // 部分平今部分平昨
-                                        trade.volume <= position.volume -> {
-                                            trade.offset = OrderOffset.CLOSE
-                                            yesterdayClosed = yesterdayVolume
-                                            todayClosed = trade.volume - yesterdayClosed
-                                        }
+                                    // 全部平昨
+                                    position.todayVolume == 0 && yesterdayVolume >= trade.volume -> {
+                                        trade.offset = OrderOffset.CLOSE_YESTERDAY
+                                        yesterdayClosed = trade.volume
+                                    }
+                                    // 部分平今部分平昨
+                                    trade.volume <= position.volume -> {
+                                        trade.offset = OrderOffset.CLOSE
+                                        todayClosed = position.todayVolume
+                                        yesterdayClosed = trade.volume - position.todayVolume
                                     }
                                 }
+                            } else {
+                                when {
+                                    // 全部平昨
+                                    trade.volume <= yesterdayVolume -> {
+                                        trade.offset = OrderOffset.CLOSE_YESTERDAY
+                                        yesterdayClosed = trade.volume
+                                    }
+                                    // 全部平今
+                                    yesterdayVolume == 0 && trade.volume <= position.todayVolume -> {
+                                        trade.offset = OrderOffset.CLOSE_TODAY
+                                        todayClosed = trade.volume
+                                    }
+                                    // 部分平今部分平昨
+                                    trade.volume <= position.volume -> {
+                                        trade.offset = OrderOffset.CLOSE
+                                        yesterdayClosed = yesterdayVolume
+                                        todayClosed = trade.volume - yesterdayClosed
+                                    }
+                                }
                             }
                         }
-                        val totalClosed = todayClosed + yesterdayClosed
-                        position.volume -= totalClosed
-                        position.todayVolume -= todayClosed
-                        position.todayCloseVolume += totalClosed
-                        position.frozenVolume -= totalClosed
-                        // 由于未知持仓明细，因此此处只按开仓均价减去对应开仓成本，保持开仓均价不变，为此查询持仓明细太麻烦了
-                        position.openCost -= position.avgOpenPrice() * totalClosed * info.volumeMultiple
-                        // 部分平今部分平昨，则本地计算手续费
-                        if (trade.offset == OrderOffset.CLOSE) {
-                            val todayClosedTurnover = todayClosed * trade.turnover / totalClosed
-                            val yesterdayClosedTurnover = yesterdayClosed * trade.turnover / totalClosed
-                            trade.commission = lastTick.calculateCommission(OrderOffset.CLOSE_TODAY, todayClosedTurnover, todayClosed) +
-                                    lastTick.calculateCommission(OrderOffset.CLOSE_YESTERDAY, yesterdayClosedTurnover, yesterdayClosed)
-                        }
+                    }
+                    val totalClosed = todayClosed + yesterdayClosed
+                    position.volume -= totalClosed
+                    position.todayVolume -= todayClosed
+                    position.todayCloseVolume += totalClosed
+                    position.frozenVolume -= totalClosed
+                    // 由于未知持仓明细，因此此处只按开仓均价减去对应开仓成本，保持开仓均价不变，为此查询持仓明细太麻烦了
+                    position.openCost -= position.avgOpenPrice() * totalClosed * info.volumeMultiple
+                    // 部分平今部分平昨，则本地计算手续费
+                    if (trade.offset == OrderOffset.CLOSE) {
+                        val todayClosedTurnover = todayClosed * trade.turnover / totalClosed
+                        val yesterdayClosedTurnover = yesterdayClosed * trade.turnover / totalClosed
+                        trade.commission = info.calculateCommission(OrderOffset.CLOSE_TODAY, todayClosedTurnover, todayClosed) +
+                                info.calculateCommission(OrderOffset.CLOSE_YESTERDAY, yesterdayClosedTurnover, yesterdayClosed)
                     }
                 }
-                if (trade.commission == 0.0) {
-                    lastTick.calculateTrade(trade)
+            }
+            if (trade.commission == 0.0) {
+                info.calculateTrade(trade)
+            }
+            if (position != null) {
+                position.todayCommission += trade.commission
+            }
+            todayTrades.add(trade)
+            api.postBrokerEvent(BrokerEventType.TRADE_REPORT, trade)
+            // 更新 order 信息
+            if (order != null) {
+                order.filledVolume += trade.volume
+                order.turnover += trade.turnover
+                order.commission += trade.commission
+                order.updateTime = trade.time
+                order.status = if (order.filledVolume < order.volume) {
+                    OrderStatus.PARTIALLY_FILLED
+                } else {
+                    OrderStatus.FILLED
                 }
-                if (position != null) {
-                    position.todayCommission += trade.commission
-                }
-                todayTrades.add(trade)
-                api.postBrokerEvent(BrokerEventType.TRADE_REPORT, trade)
-                // 更新 order 信息
-                if (order != null) {
-                    order.filledVolume += trade.volume
-                    order.turnover += trade.turnover
-                    order.commission += trade.commission
-                    order.updateTime = trade.time
-                    order.status = if (order.filledVolume < order.volume) {
-                        OrderStatus.PARTIALLY_FILLED
-                    } else {
-                        OrderStatus.FILLED
-                    }
+                if (lastTick == null) {
+                    info.calculateOrderFrozenCash(order)
+                } else {
                     lastTick.calculateOrderFrozenCash(order)
-                    api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
                 }
+                api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
             }
         }
 
