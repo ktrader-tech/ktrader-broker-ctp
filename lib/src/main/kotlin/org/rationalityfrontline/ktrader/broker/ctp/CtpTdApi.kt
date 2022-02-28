@@ -1319,10 +1319,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日订单...")
                     runWithRetry({
                         val orders = queryOrders(onlyUnfinished = false, useCache = false)
-                        val finishedStatus = setOf(OrderStatus.CANCELED, OrderStatus.FILLED, OrderStatus.ERROR)
                         orders.forEach {
                             todayOrders[it.orderId] = it
-                            if (it.status !in finishedStatus) {
+                            if (it.status.isOpen()) {
                                 when (it.direction) {
                                     Direction.LONG -> unfinishedLongOrders.insert(it)
                                     Direction.SHORT -> unfinishedShortOrders.insert(it)
@@ -1502,6 +1501,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     statusMsg = "$errorMsg ($errorCode)"
                     updateTime = LocalDateTime.now()
                 }
+                removeUnfinishedOrder(order)
                 api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
             })
         }
@@ -1875,8 +1875,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                             reqData.results.removeAll { it.code != reqData.code }
                         }
                         if (reqData.onlyUnfinished) {
-                            val finishedStatus = setOf(OrderStatus.CANCELED, OrderStatus.FILLED, OrderStatus.ERROR)
-                            reqData.results.removeAll { it.status in finishedStatus }
+                            reqData.results.removeAll { !it.status.isOpen() }
                         }
                         (request.continuation as Continuation<List<Order>>).resume(reqData.results)
                         requestMap.remove(nRequestID)
