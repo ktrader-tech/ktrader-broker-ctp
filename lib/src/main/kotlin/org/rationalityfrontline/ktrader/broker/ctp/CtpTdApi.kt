@@ -370,6 +370,10 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             order.status = OrderStatus.ERROR
             order.statusMsg = errorInfo!!
             todayOrders[orderRef] = order
+            api.scope.launch {
+                delay(1)
+                api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
+            }
         }
         return order
     }
@@ -1482,20 +1486,13 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             }
         }
 
-        /**
-         * 报单请求响应，仅本 session 发出的报单请求发生错误时会触发此回调
-         */
-        override fun OnRspOrderInsert(
-            pInputOrder: CThostFtdcInputOrderField?,
-            pRspInfo: CThostFtdcRspInfoField?,
-            nRequestID: Int,
-            bIsLast: Boolean
-        ) {
+        /** 处理订单错误回报 */
+        private fun handleOrderError(pInputOrder: CThostFtdcInputOrderField?, pRspInfo: CThostFtdcRspInfoField?) {
             checkRspInfo(pRspInfo, {}, { errorCode, errorMsg ->
                 if (pInputOrder == null) return
-                val order = todayOrders[pInputOrder.orderRef] ?: return
-                val orderId = "${frontId}_${sessionId}_${pInputOrder.orderRef}"
-                if (orderId != order.orderId) return
+                val order = todayOrders[pInputOrder.orderRef] ?: todayOrders.values.find {
+                    it.orderId.endsWith(pInputOrder.orderRef) && it.code.endsWith(pInputOrder.instrumentID) && it.price == pInputOrder.limitPrice
+                } ?: return
                 order.apply {
                     status = OrderStatus.ERROR
                     statusMsg = "$errorMsg ($errorCode)"
@@ -1507,18 +1504,30 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         }
 
         /**
-         * 撤单请求响应，仅本 session 发出的撤单请求发生错误时会触发此回调
+         * 报单请求异常回报，交易所判断报单失败时会触发此回调（所有连接均能收到回调）
          */
-        override fun OnRspOrderAction(
-            pInputOrderAction: CThostFtdcInputOrderActionField?,
+        override fun OnErrRtnOrderInsert(pInputOrder: CThostFtdcInputOrderField?, pRspInfo: CThostFtdcRspInfoField?) {
+            handleOrderError(pInputOrder, pRspInfo)
+        }
+
+        /**
+         * 报单请求异常回报，CTP 本地判断报单失败时会触发此回调（仅本连接回调，其它连接无任何回调）
+         */
+        override fun OnRspOrderInsert(
+            pInputOrder: CThostFtdcInputOrderField?,
             pRspInfo: CThostFtdcRspInfoField?,
             nRequestID: Int,
             bIsLast: Boolean
         ) {
+            handleOrderError(pInputOrder, pRspInfo)
+        }
+
+        /** 处理撤单错误回报 */
+        private fun handleOrderActionError(frontId: Int?, sessionId: Int?, orderRef: String?, pRspInfo: CThostFtdcRspInfoField?) {
             checkRspInfo(pRspInfo, {}, { errorCode, errorMsg ->
-                if (pInputOrderAction == null) return
-                val orderId = "${pInputOrderAction.frontID}_${pInputOrderAction.sessionID}_${pInputOrderAction.orderRef}"
-                val order = todayOrders[pInputOrderAction.orderRef] ?: todayOrders[orderId] ?: return
+                if (orderRef == null) return
+                val orderId = "${frontId}_${sessionId}_${orderRef}"
+                val order = todayOrders[orderRef] ?: todayOrders[orderId] ?: return
                 if (orderId != order.orderId) return
                 order.apply {
                     statusMsg = "$errorMsg ($errorCode)"
@@ -1526,6 +1535,25 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 }
                 api.postBrokerEvent(BrokerEventType.CANCEL_FAILED, order)
             })
+        }
+
+        /**
+         * 撤单请求异常回报，交易所判断撤单失败时会触发此回调（所有连接均能收到回调）
+         */
+        override fun OnErrRtnOrderAction(pOrderAction: CThostFtdcOrderActionField?, pRspInfo: CThostFtdcRspInfoField?) {
+            handleOrderActionError(pOrderAction?.frontID, pOrderAction?.sessionID, pOrderAction?.orderRef, pRspInfo)
+        }
+
+        /**
+         * 撤单请求异常回报，CTP 本地判断撤单失败时会触发此回调（仅本连接回调，其它连接无任何回调）
+         */
+        override fun OnRspOrderAction(
+            pInputOrderAction: CThostFtdcInputOrderActionField?,
+            pRspInfo: CThostFtdcRspInfoField?,
+            nRequestID: Int,
+            bIsLast: Boolean
+        ) {
+            handleOrderActionError(pInputOrderAction?.frontID, pInputOrderAction?.sessionID, pInputOrderAction?.orderRef, pRspInfo)
         }
 
         /**
