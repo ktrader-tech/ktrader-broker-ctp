@@ -488,6 +488,33 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         }
     }
 
+    /** 确保如果是中金所，那么计算报单/撤单手续费（1.0元每笔） */
+    private fun ensureOrderActionCommission(order: Order) {
+        if (order.code.startsWith(ExchangeID.CFFEX) && instruments[order.code]?.type == SecurityType.FUTURES) {
+            when (order.status) {
+                OrderStatus.ACCEPTED,
+                OrderStatus.PARTIALLY_FILLED,
+                OrderStatus.FILLED -> {
+                    if (!order.insertFeeCalculated) {
+                        order.commission += 1.0
+                        order.insertFeeCalculated = true
+                    }
+                }
+                OrderStatus.CANCELED -> {
+                    if (!order.insertFeeCalculated) {
+                        order.commission += 1.0
+                        order.insertFeeCalculated = true
+                    }
+                    if (!order.cancelFeeCalculated) {
+                        order.commission += 1.0
+                        order.cancelFeeCalculated = true
+                    }
+                }
+                else -> Unit
+            }
+        }
+    }
+
     /**
      * 查询期货及期权的保证金价格类型
      */
@@ -1349,6 +1376,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                             if (it.status == OrderStatus.CANCELED) {
                                 cancelStatistics[it.code] = cancelStatistics.getOrDefault(it.code, 0) + 1
                             }
+                            ensureOrderActionCommission(it)
                         }
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日订单成功")
                     }) { e ->
@@ -1359,6 +1387,14 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     runWithRetry({
                         val trades = queryTrades(useCache = false)
                         todayTrades.addAll(trades)
+                        trades.forEach { trade ->
+                            todayOrders[trade.orderId]?.apply {
+                                turnover += trade.turnover
+                                avgFillPrice = turnover / filledVolume / instruments[trade.code]!!.volumeMultiple
+                                commission += trade.commission
+                                updateTime = maxOf(updateTime, trade.time)
+                            }
+                        }
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录成功")
                     }) { e ->
                         resumeConnectWithException("【交易接口登录】查询当日成交记录失败：$e", e)
@@ -1642,32 +1678,13 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             order.apply {
                 status = newOrderStatus
                 statusMsg = pOrder.statusMsg
-                // 如果是中金所，那么计算报单/撤单手续费
-                if (pOrder.exchangeID == ExchangeID.CFFEX && instruments[code]?.type == SecurityType.FUTURES) {
-                    when (status) {
-                        OrderStatus.ACCEPTED,
-                        OrderStatus.PARTIALLY_FILLED,
-                        OrderStatus.FILLED -> {
-                            if (!insertFeeCalculated) {
-                                commission += volume
-                                insertFeeCalculated = true
-                            }
-                        }
-                        OrderStatus.CANCELED -> {
-                            if (!cancelFeeCalculated) {
-                                commission += volume
-                                cancelFeeCalculated = true
-                            }
-                        }
-                        else -> Unit
-                    }
-                    // 如果有申报手续费，加到 position 的手续费统计中
-                    if (oldCommission != commission) {
-                        val position = queryCachedPosition(order.code, order.direction, order.offset != OrderOffset.OPEN)
-                        position?.apply {
-                            todayCommission += commission - oldCommission
-                        }
-                    }
+            }
+            ensureOrderActionCommission(order)
+            // 如果有申报手续费，加到 position 的手续费统计中
+            if (oldCommission != order.commission) {
+                val position = queryCachedPosition(order.code, order.direction, order.offset != OrderOffset.OPEN)
+                position?.apply {
+                    todayCommission += order.commission - oldCommission
                 }
             }
             // 仅发送与成交不相关的订单状态更新回报，成交相关的订单状态更新回报会在 OnRtnTrade 中发出，以确保成交回报先于状态回报
@@ -1872,6 +1889,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             if (order != null) {
                 order.filledVolume += trade.volume
                 order.turnover += trade.turnover
+                order.avgFillPrice = order.turnover / order.filledVolume / info.volumeMultiple
                 order.commission += trade.commission
                 order.updateTime = trade.time
                 order.status = if (order.filledVolume < order.volume) {
