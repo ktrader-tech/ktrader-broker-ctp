@@ -287,10 +287,24 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         val (exchangeId, instrumentId) = parseCode(code)
         val orderRef = nextOrderRef().toString()
         // 检查是否存在自成交风险
-        var errorInfo: String? = when {
-            direction == Direction.LONG && price >= minShortPrice -> "本地拒单：存在自成交风险（当前做多价格为 $price，最低做空价格为 ${minShortPrice}）"
-            direction == Direction.SHORT && price <= maxLongPrice -> "本地拒单：存在自成交风险（当前做空价格为 $price，最高做多价格为 ${maxLongPrice}）"
-            else -> null
+        var errorInfo: String? = null
+        when {
+            direction == Direction.LONG && price >= minShortPrice -> {
+                val lastTick = mdApi.lastTicks[code]
+                val isSafe = lastTick != null && lastTick.askPrice.isNotEmpty() && lastTick.askPrice[0] < minShortPrice
+                        && (lastTick.askVolume[0] >= volume || (minShortPrice - lastTick.askPrice[0]) / (lastTick.info?.priceTick ?: 100000000.0) > volume * 1.5 / lastTick.askVolume[0])
+                if (!isSafe) {
+                    errorInfo = "本地拒单：存在自成交风险（当前做多价格为 $price，最低做空价格为 ${minShortPrice}）"
+                }
+            }
+            direction == Direction.SHORT && price <= maxLongPrice -> {
+                val lastTick = mdApi.lastTicks[code]
+                val isSafe = lastTick != null && lastTick.bidPrice.isNotEmpty() && lastTick.bidPrice[0] > maxLongPrice
+                        && (lastTick.bidVolume[0] >= volume || (lastTick.bidPrice[0] - maxLongPrice) / (lastTick.info?.priceTick ?: 100000000.0) > volume * 1.5 / lastTick.bidVolume[0])
+                if (!isSafe) {
+                    errorInfo = "本地拒单：存在自成交风险（当前做空价格为 $price，最高做多价格为 ${maxLongPrice}）"
+                }
+            }
         }
         // 用于测试 TickToTrade 的订单插入时间
         var insertTime: Long? = null
