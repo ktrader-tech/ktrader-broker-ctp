@@ -1025,6 +1025,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         // 计算持仓盈亏
         assets.positionPnl = 0.0
         positions.forEach { (code, bi) ->
+            if (code.contains(' ')) return@forEach
             ensureFullSecurityInfo(code)
             val lastTick = getOrQueryTick(code).first
             if (lastTick != null) {
@@ -1095,6 +1096,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 }
             }
             positionList.forEach {
+                if (it.code.contains(' ')) return@forEach
                 val lastTick = getOrQueryTick(it.code).first
                 if (lastTick != null) {
                     val marginPriceType = when (lastTick.info?.type) {
@@ -1116,6 +1118,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     requestMap[requestId] = RequestContinuation(requestId, continuation, tag = code ?: "", data = mutableListOf<Position>())
                 }
             }).onEach {
+                if (it.code.contains(' ')) return@onEach
                 val lastTick = getOrQueryTick(it.code).first
                 lastTick?.calculatePosition(it, calculateValue = false)
             }
