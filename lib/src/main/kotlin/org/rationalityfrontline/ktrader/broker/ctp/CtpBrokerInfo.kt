@@ -16,7 +16,10 @@ object CtpBrokerInfo: ApiInfo {
 
     override val description: String = """
         KTrader 标准交易接口的 CTP 实现
-        详情参见 https://github.com/ktrader-tech/ktrader-broker-ctp
+        
+        CTP 版本：${version}
+        
+        项目地址： https://github.com/ktrader-tech/ktrader-broker-ctp
         
         功能特性：
         * 利用 Kotlin 协程 将 CTP 的异步接口封装为同步调用方式，降低心智负担，提升开发效率
