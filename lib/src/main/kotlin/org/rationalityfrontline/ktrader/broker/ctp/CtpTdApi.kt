@@ -1169,10 +1169,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     private inner class CtpTdSpi : CThostFtdcTraderSpi() {
 
         /**
-         * 请求客户端认证。由于可能是交易日结束后断线自动重连，此时经纪商服务器刚启动，响应时间较长，
-         * 容易因请求超时而自动重连失败，因此设置了 [timeout] 参数用于在这种情况下延长超时时间（单位：ms）
+         * 请求客户端认证
          */
-        private suspend fun reqAuthenticate(timeout: Long = config.timeout) {
+        private suspend fun reqAuthenticate() {
             val reqField = CThostFtdcReqAuthenticateField().apply {
                 appID = config.appId
                 authCode = config.authCode
@@ -1182,7 +1181,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             }
             val requestId = nextRequestId()
             runWithResultCheck<Unit>({ tdApi.ReqAuthenticate(reqField, requestId) }, {
-                suspendCoroutineWithTimeout(timeout) { continuation ->
+                suspendCoroutineWithTimeout(config.timeout) { continuation ->
                     requestMap[requestId] = RequestContinuation(requestId, continuation)
                 }
             })
@@ -1269,13 +1268,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             }
         }
 
-        /**
-         * 行情前置连接时回调。会将 [requestId] 置为 0
-         */
-        override fun OnFrontConnected() {
-            frontConnected = true
-            requestId.set(0)
-            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】前置服务器已连接")
+        /** 进行实际的连接操作 */
+        private fun doConnect() {
             api.scope.launch {
                 fun resumeConnectWithException(errorInfo: String, e: Exception) {
                     e.printStackTrace()
@@ -1287,13 +1281,16 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     // 请求客户端认证
                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证...")
                     try {
-                        if (hasRequest("connect")) {
-                            reqAuthenticate()
-                        } else {
-                            reqAuthenticate(60000)
-                        }
+                        reqAuthenticate()
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证成功")
                     } catch (e: Exception) {
+                        if (e.message == "CTP:还没有初始化 (7)") { //说明遇到了夜盘开盘前断线重连时前置服务器尚未完全未初始化的问题
+                            launch {
+                                delay(600000)
+                                api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】已等待10分钟，尝试重新登录...")
+                                doConnect()
+                            }
+                        }
                         resumeConnectWithException("【交易接口登录】请求客户端认证失败：$e", e)
                     }
                     // 请求用户登录
@@ -1417,6 +1414,16 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     resumeRequestsWithException("connect", e.message ?: e.toString())
                 }
             }
+        }
+
+        /**
+         * 行情前置连接时回调。会将 [requestId] 置为 0
+         */
+        override fun OnFrontConnected() {
+            frontConnected = true
+            requestId.set(0)
+            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】前置服务器已连接")
+            doConnect()
         }
 
         /**

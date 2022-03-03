@@ -291,7 +291,10 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                 // 如果当日已订阅列表不为空，则说明发生了日内断网重连，自动重新订阅
                 if (subscriptions.isNotEmpty() && tradingDay == pRspUserLogin.tradingDay) {
                     api.scope.launch {
-                        runWithRetry({ subscribeMarketData(subscriptions.toList(), mapOf("isForce" to "true")) }, { e ->
+                        runWithRetry({
+                            subscribeMarketData(subscriptions.toList(), mapOf("isForce" to "true"))
+                            api.postBrokerLogEvent(LogLevel.INFO, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情成功")
+                        }, { e ->
                             api.postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情失败：$e")
                         })
                     }
