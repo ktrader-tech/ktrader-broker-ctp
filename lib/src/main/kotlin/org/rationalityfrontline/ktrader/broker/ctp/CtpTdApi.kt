@@ -1520,11 +1520,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     mdApi.codeMap.clear()
                     positions.clear()
                     cacheFile.writeText("$tradingDay\n${orderRef.get()}")
-                    if (hasRequest("connect")) {
-                        newTradingDayOnConnect = true
-                    } else {
-                        api.postBrokerEvent(BrokerEventType.NEW_TRADING_DAY, Converter.dateC2A(tradingDay))
-                    }
+                    newTradingDayOnConnect = true
                 }
                 if (bIsLast) {
                     (request.continuation as Continuation<Unit>).resume(Unit)
