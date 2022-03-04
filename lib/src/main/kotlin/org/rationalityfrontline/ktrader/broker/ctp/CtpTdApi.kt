@@ -1284,11 +1284,13 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         reqAuthenticate()
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证成功")
                     } catch (e: Exception) {
-                        if (e.message == "CTP:还没有初始化 (7)") { //说明遇到了夜盘开盘前断线重连时前置服务器尚未完全未初始化的问题
+                        if (!hasRequest("connect")) { //说明遇到了晚上 21:00 或早上 09:00 前断线重连时前置服务器尚未完全未初始化的问题
                             launch {
                                 delay(600000)
-                                api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】已等待10分钟，尝试重新登录...")
-                                doConnect()
+                                if (frontConnected) {
+                                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】已等待10分钟，尝试重新登录...")
+                                    doConnect()
+                                }
                             }
                         }
                         resumeConnectWithException("【交易接口登录】请求客户端认证失败：$e", e)
