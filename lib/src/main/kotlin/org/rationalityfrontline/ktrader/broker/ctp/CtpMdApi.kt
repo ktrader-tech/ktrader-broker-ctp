@@ -261,11 +261,12 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
          * 行情前置断开连接时回调。会将 [connected] 置为 false；清空 [lastTicks]；异常完成所有的协程请求
          */
         override fun OnFrontDisconnected(nReason: Int) {
+            if (!frontConnected) return //避免重复处理相同事件，这在使用 SIMNOW 账户时会发生
+            val msg = "【CtpMdSpi.OnFrontDisconnected】前置服务器连接断开：${getDisconnectReason(nReason)} ($nReason)"
+            api.postBrokerLogEvent(LogLevel.INFO, msg)
             frontConnected = false
             connected = false
             lastTicks.clear()
-            val msg = "【CtpMdSpi.OnFrontDisconnected】前置服务器连接断开：${getDisconnectReason(nReason)} ($nReason)"
-            api.postBrokerLogEvent(LogLevel.INFO, msg)
             val e = Exception(msg)
             requestMap.values.forEach {
                 it.continuation.resumeWithException(e)

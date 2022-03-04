@@ -1441,10 +1441,10 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
          */
         override fun OnFrontDisconnected(nReason: Int) {
             if (!frontConnected) return //避免重复处理相同事件，这在使用 SIMNOW 账户时会发生
-            frontConnected = false
-            connected = false
             val msg = "【CtpTdSpi.OnFrontDisconnected】前置服务器连接断开：${getDisconnectReason(nReason)} ($nReason)"
             api.postBrokerLogEvent(LogLevel.INFO, msg)
+            frontConnected = false
+            connected = false
             val e = Exception(msg)
             requestMap.values.forEach {
                 it.continuation.resumeWithException(e)
