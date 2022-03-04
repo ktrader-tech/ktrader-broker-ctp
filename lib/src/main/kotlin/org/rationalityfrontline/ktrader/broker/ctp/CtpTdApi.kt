@@ -1695,6 +1695,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             order.apply {
                 status = newOrderStatus
                 statusMsg = pOrder.statusMsg
+                if (!status.isOpen()) frozenCash = 0.0
             }
             ensureOrderActionCommission(order)
             // 如果有申报手续费，加到 position 的手续费统计中
