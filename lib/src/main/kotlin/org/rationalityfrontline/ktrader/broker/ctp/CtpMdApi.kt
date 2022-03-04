@@ -150,7 +150,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
      */
     suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, String>? = null): List<SecurityInfo> {
         if (codes.isEmpty()) return emptyList()
-        val filteredCodes = if (extras?.get("isForce") != "true") codes.filter { it !in subscriptions } else codes
+        val filteredCodes = if (extras?.get("isForce") != "true") codes.filter { it !in subscriptions && !it.contains(' ') } else codes
         if (filteredCodes.isEmpty()) return emptyList()
         // CTP 行情订阅目前（2021.07）每34个订阅会丢失一个订阅（OnRspSubMarketData 中会每34个回调返回一个 bIsLast 为 true），所以需要分割
         if (filteredCodes.size >= 34) {
@@ -287,6 +287,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                     resumeRequestsWithException("connect", "【CtpMdSpi.OnRspUserLogin】请求用户登录失败：pRspUserLogin 为 null")
                     return
                 }
+                api.postBrokerLogEvent(LogLevel.INFO, "【行情接口登录】登录成功")
                 connected = true
                 // 如果当日已订阅列表不为空，则说明发生了日内断网重连，自动重新订阅
                 if (subscriptions.isNotEmpty() && tradingDay == pRspUserLogin.tradingDay) {
@@ -304,7 +305,6 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                     subscriptions.clear()
                     tradingDay = pRspUserLogin.tradingDay
                 }
-                api.postBrokerLogEvent(LogLevel.INFO, "【行情接口登录】登录成功")
                 resumeRequests("connect", Unit)
             }, { errorCode, errorMsg ->
                 resumeRequestsWithException("connect", "【CtpMdSpi.OnRspUserLogin】请求用户登录失败：$errorMsg ($errorCode)")

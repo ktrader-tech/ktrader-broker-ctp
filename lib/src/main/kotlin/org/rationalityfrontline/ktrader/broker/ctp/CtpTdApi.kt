@@ -73,6 +73,10 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
      */
     private var frontConnected: Boolean = false
     /**
+     * 是否正在进行登录操作（[CtpTdSpi.doConnect]）
+     */
+    private var doConnecting: Boolean = false
+    /**
      * 是否已完成登录操作（即处于可用状态）
      */
     var connected: Boolean by api::tdConnected
@@ -1271,6 +1275,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         /** 进行实际的连接操作 */
         private fun doConnect() {
             api.scope.launch {
+                if (doConnecting) return@launch //避免同一时间段重复连接
+                doConnecting = true
                 fun resumeConnectWithException(errorInfo: String, e: Exception) {
                     e.printStackTrace()
                     api.postBrokerLogEvent(LogLevel.ERROR, errorInfo)
@@ -1287,7 +1293,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         if (!hasRequest("connect")) { //说明遇到了晚上 21:00 或早上 09:00 前断线重连时前置服务器尚未完全未初始化的问题
                             launch {
                                 delay(600000)
-                                if (frontConnected) {
+                                if (frontConnected && !connected && !doConnecting) {
                                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】已等待10分钟，尝试重新登录...")
                                     doConnect()
                                 }
@@ -1402,8 +1408,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         resumeConnectWithException("【交易接口登录】查询当日成交记录失败：$e", e)
                     }
                     // 登录操作完成
-                    connected = true
                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】登录成功")
+                    connected = true
                     resumeRequests("connect", Unit)
                     if (newTradingDayOnConnect) {
                         newTradingDayOnConnect = false
@@ -1414,6 +1420,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     e.printStackTrace()
                     api.postBrokerLogEvent(LogLevel.ERROR, "【交易接口登录】发生预期外的异常：$e")
                     resumeRequestsWithException("connect", e.message ?: e.toString())
+                } finally {
+                    doConnecting = false
                 }
             }
         }
@@ -1432,6 +1440,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
          * 交易前置断开连接时回调。会将 [connected] 置为 false；异常完成所有的协程请求
          */
         override fun OnFrontDisconnected(nReason: Int) {
+            if (!frontConnected) return //避免重复处理相同事件，这在使用 SIMNOW 账户时会发生
             frontConnected = false
             connected = false
             val msg = "【CtpTdSpi.OnFrontDisconnected】前置服务器连接断开：${getDisconnectReason(nReason)} ($nReason)"
