@@ -1518,19 +1518,19 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 } else { // 如果交易日变动，并将 orderRef 重置为 10000
                     if (tradingDay != "") lastTradingDay = tradingDay
                     tradingDay = pRspUserLogin.tradingDay
+                    if (lastTradingDay == "") {
+                        var date = tradingDate.minusDays(1)
+                        while (date.dayOfWeek in setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)) {
+                            date = date.minusDays(1)
+                        }
+                        lastTradingDay = date.format(DateTimeFormatter.BASIC_ISO_DATE)
+                    }
                     orderRef.set(9999)
                     nextOrderRef()
                     newTradingDayOnConnect = true
                     instruments.clear()
                     codeProductMap.clear()
                     mdApi.codeMap.clear()
-                }
-                if (lastTradingDay == "") {
-                    var date = tradingDate.minusDays(1)
-                    while (date.dayOfWeek in setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)) {
-                        date = date.minusDays(1)
-                    }
-                    lastTradingDay = date.format(DateTimeFormatter.BASIC_ISO_DATE)
                 }
                 // 清空各种缓存
                 unfinishedLongOrders.clear()
