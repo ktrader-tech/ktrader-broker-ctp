@@ -1754,8 +1754,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         if (newOrderStatus == OrderStatus.CANCELED) {
                             LocalTime.parse(pOrder.cancelTime).atDate(LocalDate.now())
                         } else {
-                            val date = pOrder.insertDate
-                            LocalDateTime.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${pOrder.insertTime}")
+                            Converter.timeC2A(pOrder.insertTime, tradingDate, lastTradingDate)
                         }
                     } catch (e: Exception) {
                         api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order updateTime 解析失败：${order.orderId}, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
