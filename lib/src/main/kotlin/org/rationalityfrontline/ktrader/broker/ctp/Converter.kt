@@ -21,7 +21,7 @@ internal object Converter {
     val THOST_FTDC_HF_Speculation = jctpConstants.THOST_FTDC_HF_Speculation.toString()
 
     fun dateC2A(date: String): LocalDate {
-        return LocalDate.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}")
+        return LocalDate.parse(date, DateTimeFormatter.BASIC_ISO_DATE)
     }
 
     fun marginPriceTypeC2A(type: Char): MarginPriceType {

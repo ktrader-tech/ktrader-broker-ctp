@@ -8,9 +8,11 @@ import org.rationalityfrontline.jctp.jctpConstants.*
 import org.rationalityfrontline.ktrader.api.broker.*
 import org.rationalityfrontline.ktrader.api.datatype.*
 import java.io.File
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.Continuation
@@ -39,19 +41,26 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     private val orderRef = AtomicInteger(10000)
     private fun nextOrderRef(): Int {
         val nextOrderRef = orderRef.incrementAndGet()
-        cacheFile.writeText("$tradingDay\n$nextOrderRef")
+        cacheFile.writeText("$lastTradingDay\n$tradingDay\n$nextOrderRef")
         return nextOrderRef
     }
-    /**
-     * 上次更新的交易日。当 [connected] 处于 false 状态时可能因过期而失效
-     */
+    /** 当前交易日 */
     private var tradingDay = ""
         set(value) {
             field = value
             tradingDate = Converter.dateC2A(value)
         }
+    /** 当前交易日 */
     var tradingDate: LocalDate = LocalDate.now()
         private set
+    /** 上一个交易日 */
+    private var lastTradingDay = ""
+        set(value) {
+            field = value
+            lastTradingDate = Converter.dateC2A(value)
+        }
+    /** 上一个交易日 */
+    private var lastTradingDate = tradingDate
     /**
      * 用于记录维护交易日及 orderRef 的缓存文件
      */
@@ -1492,28 +1501,36 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     requestMap.remove(nRequestID)
                     return
                 }
-                frontId = pRspUserLogin.frontID
-                sessionId = pRspUserLogin.sessionID
-                tradingDay = pRspUserLogin.tradingDay
-                var lastTradingDay = ""
                 var lastMaxOrderRef = 10000
                 if (cacheFile.exists()) {
                     val lines = cacheFile.readLines()
                     if (lines.size >= 2) {
                         lastTradingDay = lines[0]
-                        lastMaxOrderRef = lines[1].toIntOrNull() ?: lastMaxOrderRef
+                        tradingDay = lines[1]
+                        lastMaxOrderRef = lines[2].toIntOrNull() ?: lastMaxOrderRef
                     }
                 }
+                frontId = pRspUserLogin.frontID
+                sessionId = pRspUserLogin.sessionID
                 // 如果交易日未变，则延续使用上一次的 maxOrderRef
-                if (lastTradingDay == tradingDay) {
+                if (tradingDay == pRspUserLogin.tradingDay) {
                     orderRef.set(lastMaxOrderRef)
                 } else { // 如果交易日变动，并将 orderRef 重置为 10000
-                    orderRef.set(10000)
-                    cacheFile.writeText("$tradingDay\n${orderRef.get()}")
+                    if (tradingDay != "") lastTradingDay = tradingDay
+                    tradingDay = pRspUserLogin.tradingDay
+                    orderRef.set(9999)
+                    nextOrderRef()
                     newTradingDayOnConnect = true
                     instruments.clear()
                     codeProductMap.clear()
                     mdApi.codeMap.clear()
+                }
+                if (lastTradingDay == "") {
+                    var date = tradingDate.minusDays(1)
+                    while (date.dayOfWeek in setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)) {
+                        date = date.minusDays(1)
+                    }
+                    lastTradingDay = date.format(DateTimeFormatter.BASIC_ISO_DATE)
                 }
                 // 清空各种缓存
                 unfinishedLongOrders.clear()
