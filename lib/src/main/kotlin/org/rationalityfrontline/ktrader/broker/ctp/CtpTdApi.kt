@@ -75,7 +75,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     /**
      * 是否正在进行登录操作（[CtpTdSpi.doConnect]）
      */
-    private var doConnecting: Boolean = false
+    @Volatile private var doConnecting: Boolean = false
     /**
      * 是否已完成登录操作（即处于可用状态）
      */
@@ -239,12 +239,12 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
      */
     suspend fun connect() {
         if (inited) return
+        inited = true
         suspendCoroutine<Unit> { continuation ->
             val requestId = Int.MIN_VALUE // 因为 OnFrontConnected 中 requestId 会重置为 0，为防止 requestId 重复，取整数最小值
             requestMap[requestId] = RequestContinuation(requestId, continuation, "connect")
             api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】连接前置服务器...")
             tdApi.Init()
-            inited = true
         }
     }
 
@@ -1317,38 +1317,41 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     } catch (e: Exception) {
                         resumeConnectWithException("【交易接口登录】请求结算单确认失败：$e", e)
                     }
-                    // 查询全市场合约
-                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约...")
-                    runWithRetry({
-                        val allInstruments = queryAllSecurities(false, null)
-                        allInstruments.forEach {
-                            instruments[it.code] = it
-                            codeProductMap[it.code] = it.productId
-                            mdApi.codeMap[it.code.split('.', limit = 2)[1]] = it.code
+                    // 如果是同一交易日断线重连，则可以跳过以下查询
+                    if (newTradingDayOnConnect || hasRequest("connect")) {
+                        // 查询全市场合约
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约...")
+                        runWithRetry({
+                            val allInstruments = queryAllSecurities(false, null)
+                            allInstruments.forEach {
+                                instruments[it.code] = it
+                                codeProductMap[it.code] = it.productId
+                                mdApi.codeMap[it.code.split('.', limit = 2)[1]] = it.code
+                            }
+                            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约成功")
+                        }) { e ->
+                            resumeConnectWithException("【交易接口登录】查询全市场合约失败：$e", e)
                         }
-                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约成功")
-                    }) { e ->
-                        resumeConnectWithException("【交易接口登录】查询全市场合约失败：$e", e)
-                    }
-                    // 查询保证金价格类型、持仓合约的保证金率及手续费率（如果未禁止费用计算）
-                    // 查询保证金价格类型
-                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型...")
-                    runWithRetry({
-                        queryMarginPriceType()
-                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型成功")
-                    }) { e ->
-                        resumeConnectWithException("【交易接口登录】查询保证金价格类型失败：$e", e)
-                    }
-                    // 查询持仓合约的手续费率及保证金率
-                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率...")
-                    try {
-                        runWithRetry({ queryFuturesCommissionRate() })
-                        runWithRetry({ queryFuturesMarginRate() })
-                        runWithRetry({ queryOptionsCommissionRate() })
-                        runWithRetry({ queryOptionsMargin() })
-                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
-                    } catch (e: Exception) {
-                        resumeConnectWithException("【交易接口登录】查询持仓合约手续费率及保证金率失败：$e", e)
+                        // 查询保证金价格类型、持仓合约的保证金率及手续费率（如果未禁止费用计算）
+                        // 查询保证金价格类型
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型...")
+                        runWithRetry({
+                            queryMarginPriceType()
+                            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型成功")
+                        }) { e ->
+                            resumeConnectWithException("【交易接口登录】查询保证金价格类型失败：$e", e)
+                        }
+                        // 查询持仓合约的手续费率及保证金率
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率...")
+                        try {
+                            runWithRetry({ queryFuturesCommissionRate() })
+                            runWithRetry({ queryFuturesMarginRate() })
+                            runWithRetry({ queryOptionsCommissionRate() })
+                            runWithRetry({ queryOptionsMargin() })
+                            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
+                        } catch (e: Exception) {
+                            resumeConnectWithException("【交易接口登录】查询持仓合约手续费率及保证金率失败：$e", e)
+                        }
                     }
                     // 查询账户持仓
                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓...")
@@ -1504,24 +1507,25 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 // 如果交易日未变，则延续使用上一次的 maxOrderRef
                 if (lastTradingDay == tradingDay) {
                     orderRef.set(lastMaxOrderRef)
-                } else { // 如果交易日变动，则清空各种缓存，并将 orderRef 重置为 10000
+                } else { // 如果交易日变动，并将 orderRef 重置为 10000
                     orderRef.set(10000)
-                    todayOrders.clear()
-                    todayTrades.clear()
-                    unfinishedLongOrders.clear()
-                    unfinishedShortOrders.clear()
-                    cancelStatistics.clear()
-                    instruments.clear()
-                    marginRateQueriedCodes.clear()
-                    commissionRateQueriedCodes.clear()
-                    dayPriceInfoQueriedCodes.clear()
-                    codeProductMap.clear()
-                    cachedTickMap.clear()
-                    mdApi.codeMap.clear()
-                    positions.clear()
                     cacheFile.writeText("$tradingDay\n${orderRef.get()}")
                     newTradingDayOnConnect = true
+                    instruments.clear()
+                    codeProductMap.clear()
+                    mdApi.codeMap.clear()
                 }
+                // 清空各种缓存
+                unfinishedLongOrders.clear()
+                unfinishedShortOrders.clear()
+                todayOrders.clear()
+                todayTrades.clear()
+                positions.clear()
+                cancelStatistics.clear()
+                marginRateQueriedCodes.clear()
+                commissionRateQueriedCodes.clear()
+                dayPriceInfoQueriedCodes.clear()
+                cachedTickMap.clear()
                 if (bIsLast) {
                     (request.continuation as Continuation<Unit>).resume(Unit)
                     requestMap.remove(nRequestID)

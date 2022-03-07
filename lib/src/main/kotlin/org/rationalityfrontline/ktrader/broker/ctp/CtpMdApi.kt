@@ -115,12 +115,12 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
      */
     suspend fun connect() {
         if (inited) return
+        inited = true
         suspendCoroutine<Unit> { continuation ->
             val requestId = Int.MIN_VALUE // 因为 OnFrontConnected 中 requestId 会重置为 0，为防止 requestId 重复，取整数最小值
             requestMap[requestId] = RequestContinuation(requestId, continuation, "connect")
             api.postBrokerLogEvent(LogLevel.INFO, "【行情接口登录】连接前置服务器...")
             mdApi.Init()
-            inited = true
         }
     }
 
@@ -129,6 +129,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
      */
     fun close() {
         if (frontConnected) mdSpi.OnFrontDisconnected(0)
+        preSubscriptions.clear()
         subscriptions.clear()
         codeMap.clear()
         mdApi.Release()
