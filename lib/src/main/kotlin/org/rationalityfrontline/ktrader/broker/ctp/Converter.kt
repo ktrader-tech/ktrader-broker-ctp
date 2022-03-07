@@ -24,6 +24,11 @@ internal object Converter {
         return LocalDate.parse(date, DateTimeFormatter.BASIC_ISO_DATE)
     }
 
+    fun timeC2A(time: String, tradingDay: LocalDate, lastTradingDay: LocalDate): LocalDateTime {
+        val t = LocalTime.parse(time)
+        return t.atDate(if (t.hour > 19) lastTradingDay else tradingDay)
+    }
+
     fun marginPriceTypeC2A(type: Char): MarginPriceType {
         return when (type) {
             jctpConstants.THOST_FTDC_MPT_PreSettlementPrice -> MarginPriceType.PRE_SETTLEMENT_PRICE
@@ -174,7 +179,13 @@ internal object Converter {
         }
     }
 
-    fun orderC2A(tradingDay: LocalDate, orderField: CThostFtdcOrderField, info: SecurityInfo?, onTimeParseError: (Exception) -> Unit): Order {
+    fun orderC2A(
+        tradingDay: LocalDate,
+        lastTradingDay: LocalDate,
+        orderField: CThostFtdcOrderField,
+        info: SecurityInfo?,
+        onTimeParseError: (Exception) -> Unit
+    ): Order {
         val orderId = "${orderField.frontID}_${orderField.sessionID}_${orderField.orderRef}"
         val orderType = when (orderField.orderPriceType) {
             jctpConstants.THOST_FTDC_OPT_LimitPrice -> when (orderField.timeCondition) {
@@ -200,15 +211,14 @@ internal object Converter {
             }
         }
         val createTime = try {
-            val date = orderField.insertDate
-            LocalDateTime.parse("${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${orderField.insertTime}")
+            timeC2A(orderField.insertTime, tradingDay, lastTradingDay)
         } catch (e: Exception) {
             onTimeParseError(e)
             LocalDateTime.now()
         }
         val updateTime = if (orderStatus == OrderStatus.CANCELED) {
             try {
-                LocalTime.parse(orderField.cancelTime).atDate(LocalDate.now())
+                timeC2A(orderField.cancelTime, tradingDay, lastTradingDay)
             } catch (e: Exception) {
                 onTimeParseError(e)
                 LocalDateTime.now()
@@ -228,6 +238,7 @@ internal object Converter {
 
     fun tradeC2A(
         tradingDay: LocalDate,
+        lastTradingDay: LocalDate,
         tradeField: CThostFtdcTradeField,
         orderId: String,
         closePositionPrice: Double,
@@ -235,9 +246,7 @@ internal object Converter {
         onTimeParseError: (Exception) -> Unit
     ): Trade {
         val tradeTime = try {
-            val date = tradeField.tradeDate
-            val updateTimeStr = "${date.slice(0..3)}-${date.slice(4..5)}-${date.slice(6..7)}T${tradeField.tradeTime}"
-            LocalDateTime.parse(updateTimeStr)
+            timeC2A(tradeField.tradeTime, tradingDay, lastTradingDay)
         } catch (e: Exception) {
             onTimeParseError(e)
             LocalDateTime.now()

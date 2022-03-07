@@ -1657,7 +1657,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 // 如果是第一次接收回报，则创建并缓存该订单，之后局部变量 order 不为 null
                 if (order == null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
-                    order = Converter.orderC2A(tradingDate, pOrder, instruments[code]) { e ->
+                    order = Converter.orderC2A(tradingDate, lastTradingDate, pOrder, instruments[code]) { e ->
                         api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnOrder】Order time 解析失败：${orderId}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     api.scope.launch {
@@ -1792,6 +1792,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             }
             val trade = Converter.tradeC2A(
                 tradingDate,
+                lastTradingDate,
                 pTrade,
                 order?.orderId ?: orderSysId,
                 order?.closePositionPrice ?: 0.0,
@@ -1959,7 +1960,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 val reqData = request.data as QueryOrdersData
                 if (pOrder != null) {
                     val code = "${pOrder.exchangeID}.${pOrder.instrumentID}"
-                    val order = Converter.orderC2A(Converter.dateC2A(pOrder.tradingDay), pOrder, instruments[code]) { e ->
+                    val order = Converter.orderC2A(tradingDate, lastTradingDate, pOrder, instruments[code]) { e ->
                         api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryOrder】Order time 解析失败：${"${pOrder.frontID}_${pOrder.sessionID}_${pOrder.orderRef}"}, $code, ${pOrder.insertDate}_${pOrder.insertTime}_${pOrder.cancelTime}, $e")
                     }
                     reqData.results.add(order)
@@ -2008,7 +2009,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         }
                     }
                     val code = "${pTrade.exchangeID}.${pTrade.instrumentID}"
-                    val trade = Converter.tradeC2A(Converter.dateC2A(pTrade.tradingDay), pTrade, order?.orderId ?: orderSysId, order?.closePositionPrice ?: 0.0, instruments[code]?.name ?: code) { e ->
+                    val trade = Converter.tradeC2A(tradingDate, lastTradingDate, pTrade, order?.orderId ?: orderSysId, order?.closePositionPrice ?: 0.0, instruments[code]?.name ?: code) { e ->
                         api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryTrade】Trade tradeTime 解析失败：${pTrade.tradeID}, ${pTrade.orderRef}, $orderSysId, ${pTrade.exchangeID}.${pTrade.instrumentID}, ${pTrade.tradeDate}T${pTrade.tradeTime}, $e")
                     }
                     reqData.results.add(trade)
