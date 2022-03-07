@@ -52,9 +52,11 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
      */
     var connected: Boolean by api::mdConnected
     /**
-     * 当前交易日内已订阅的合约代码集合（当交易日发生更替时上一交易日的订阅会自动失效清零）
+     * 当前交易日内已订阅的合约代码集合（当交易日发生更替时会自动失效清零）
      */
     val subscriptions: MutableSet<String> = mutableSetOf()
+    /** 当前交易日断连前的订阅列表（当交易日发生更替时会自动失效清零） */
+    private val preSubscriptions: MutableSet<String> = mutableSetOf()
     /**
      * 缓存的合约代码列表，key 为 InstrumentID, value 为 ExchangeID.InstrumentID（因为 OnRtnDepthMarketData 返回的数据中没有 ExchangeID，所以需要在订阅时缓存完整代码，在 CtpTdApi 获取到全合约信息时会被填充）
      */
@@ -146,11 +148,11 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
     fun querySubscriptions(useCache: Boolean, extras: Map<String, String>?): List<String> = subscriptions.toList()
 
     /**
-     * 订阅行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复订阅。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
+     * 订阅行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复订阅
      */
     suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, String>? = null): List<SecurityInfo> {
         if (codes.isEmpty()) return emptyList()
-        val filteredCodes = if (extras?.get("isForce") != "true") codes.filter { it !in subscriptions && !it.contains(' ') } else codes
+        val filteredCodes = codes.filter { it !in subscriptions && !it.contains(' ') }
         if (filteredCodes.isEmpty()) return emptyList()
         // CTP 行情订阅目前（2021.07）每34个订阅会丢失一个订阅（OnRspSubMarketData 中会每34个回调返回一个 bIsLast 为 true），所以需要分割
         if (filteredCodes.size >= 34) {
@@ -267,6 +269,8 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
             frontConnected = false
             connected = false
             lastTicks.clear()
+            preSubscriptions.addAll(subscriptions)
+            subscriptions.clear()
             val e = Exception(msg)
             requestMap.values.forEach {
                 it.continuation.resumeWithException(e)
@@ -290,20 +294,21 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                 }
                 api.postBrokerLogEvent(LogLevel.INFO, "【行情接口登录】登录成功")
                 connected = true
-                // 如果当日已订阅列表不为空，则说明发生了日内断网重连，自动重新订阅
-                if (subscriptions.isNotEmpty() && tradingDay == pRspUserLogin.tradingDay) {
-                    api.scope.launch {
-                        runWithRetry({
-                            subscribeMarketData(subscriptions.toList(), mapOf("isForce" to "true"))
-                            api.postBrokerLogEvent(LogLevel.INFO, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情成功")
-                        }, { e ->
-                            api.postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情失败：$e")
-                        })
+                subscriptions.clear()
+                if (tradingDay == pRspUserLogin.tradingDay) {
+                    // 如果当日已订阅列表不为空，则说明发生了日内断网重连，自动重新订阅
+                    if (preSubscriptions.isNotEmpty()) {
+                        api.scope.launch {
+                            runWithRetry({
+                                subscribeMarketData(preSubscriptions.toList())
+                                api.postBrokerLogEvent(LogLevel.INFO, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情成功")
+                            }, { e ->
+                                api.postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情失败：$e")
+                            })
+                        }
                     }
-                }
-                // 如果交易日变更，则清空当日已订阅列表
-                if (tradingDay != pRspUserLogin.tradingDay) {
-                    subscriptions.clear()
+                } else {
+                    preSubscriptions.clear()
                     tradingDay = pRspUserLogin.tradingDay
                 }
                 resumeRequests("connect", Unit)
