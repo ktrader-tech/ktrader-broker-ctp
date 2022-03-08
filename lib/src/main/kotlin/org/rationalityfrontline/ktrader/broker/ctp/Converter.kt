@@ -286,7 +286,6 @@ internal object Converter {
             volume = positionField.position,
             todayVolume = positionField.todayPosition,
             frozenVolume = frozenVolume,
-            frozenTodayVolume = max(frozenVolume - (positionField.position - positionField.todayPosition), 0),
             todayOpenVolume = positionField.openVolume,
             todayCloseVolume = positionField.closeVolume,
             todayCommission = positionField.commission,

@@ -161,6 +161,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
      * 合约撤单次数统计，用于检测频繁撤单，key 为 code，value 为撤单次数
      */
     private val cancelStatistics: MutableMap<String, Int> = mutableMapOf()
+    /** 用于记录某个订单的冻结仓位是否被计算过，主要用于针对下单立即成交的订单（只会回报一次 FILLED 订单回报） */
+    private val orderFrozenVolumeCountedSet = mutableSetOf<String>()
 
     init {
         val cachePath = config.cachePath.ifBlank { "./data/ctp/" }
@@ -1403,6 +1405,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                             }
                             ensureOrderActionCommission(it)
                         }
+                        orderFrozenVolumeCountedSet.clear()
+                        orderFrozenVolumeCountedSet.addAll(todayOrders.keys)
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日订单成功")
                     }) { e ->
                         resumeConnectWithException("【交易接口登录】查询当日订单失败：$e", e)
@@ -1601,6 +1605,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 commissionRateQueriedCodes.clear()
                 dayPriceInfoQueriedCodes.clear()
                 cachedTickMap.clear()
+                orderFrozenVolumeCountedSet.clear()
                 if (bIsLast) {
                     (request.continuation as Continuation<Unit>).resume(Unit)
                     requestMap.remove(nRequestID)
@@ -1784,27 +1789,24 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     todayCommission += order.commission - oldCommission
                 }
             }
-            // 仅发送与成交不相关的订单状态更新回报，成交相关的订单状态更新回报会在 OnRtnTrade 中发出，以确保成交回报先于状态回报
-            if (newOrderStatus != OrderStatus.PARTIALLY_FILLED && newOrderStatus != OrderStatus.FILLED) {
-                // 如果是平仓，更新仓位冻结及剩余可平信息
-                if (order.offset != OrderOffset.OPEN) {
-                    val position = queryCachedPosition(order.code, order.direction, true)
+            // 更新仓位冻结信息
+            val position = queryCachedPosition(order.code, order.direction, true)
+            if (order.orderId !in orderFrozenVolumeCountedSet) {
+                orderFrozenVolumeCountedSet.add(order.orderId)
+                if (position != null) {
+                    position.frozenVolume += order.volume
+                }
+            }
+            if (newOrderStatus == OrderStatus.ERROR || newOrderStatus == OrderStatus.CANCELED) {
+                if (oldStatus != OrderStatus.ERROR && oldStatus != OrderStatus.CANCELED) {
+                    val restVolume = order.volume - pOrder.volumeTraded
                     if (position != null) {
-                        when (newOrderStatus) {
-                            OrderStatus.ACCEPTED -> {
-                                position.frozenVolume += order.volume
-                            }
-                            OrderStatus.CANCELED,
-                            OrderStatus.ERROR -> {
-                                if (oldStatus != OrderStatus.ERROR && oldStatus != OrderStatus.CANCELED) {
-                                    val restVolume = order.volume - pOrder.volumeTraded
-                                    position.frozenVolume -= restVolume
-                                }
-                            }
-                            else -> Unit
-                        }
+                        position.frozenVolume -= restVolume
                     }
                 }
+            }
+            // 仅发送与成交不相关的订单状态更新回报，成交相关的订单状态更新回报会在 OnRtnTrade 中发出，以确保成交回报先于状态回报
+            if (newOrderStatus != OrderStatus.PARTIALLY_FILLED && newOrderStatus != OrderStatus.FILLED) {
                 if (newOrderStatus == OrderStatus.ERROR) {
                     order.updateTime = LocalDateTime.now()
                 } else {
@@ -1868,7 +1870,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         biPosition.long = Position(
                             config.investorId, tradingDate,
                             trade.code, Direction.LONG, 0, 0, 0, 0,
-                            0, 0,0, 0.0, 0.0
+                            0, 0, 0.0, 0.0
                         ).apply {
                             info.copyFieldsToPosition(this)
                         }
@@ -1881,7 +1883,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         biPosition.short = Position(
                             config.investorId, tradingDate,
                             trade.code, Direction.SHORT, 0, 0, 0, 0,
-                            0, 0, 0, 0.0, 0.0
+                            0, 0, 0.0, 0.0
                         ).apply {
                             info.copyFieldsToPosition(this)
                         }
