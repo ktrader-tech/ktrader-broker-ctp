@@ -771,7 +771,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         if (tick == null) {
             tick = cachedTickMap[code]
             // 如果未从本地缓存中获得旧的 tick，查询最新 tick（查询操作会自动缓存 tick 至本地缓存中）
-            if (tick == null) {
+            if (tick == null && connected) {
                 api.postBrokerLogEvent(LogLevel.INFO, "【CtpTdApi.getOrQueryTick】自动查询并缓存最新 Tick：$code")
                 tick = runWithRetry({ queryLastTick(code, useCache = false) }) { e->
                     api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdApi.getOrQueryTick】查询合约最新 Tick 失败：$code, $e")
@@ -1365,7 +1365,12 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     // 查询账户持仓
                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓...")
                     runWithRetry({
-                        queryPositions(useCache = false)
+                        queryPositions(useCache = false).apply {
+                            forEach {
+                                it.leftPreVolume = it.preVolume
+                                it.leftTodayOpenVolume = it.todayOpenVolume
+                            }
+                        }
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓成功")
                     }) { e ->
                         resumeConnectWithException("【交易接口登录】查询账户持仓失败：$e", e)
@@ -1405,14 +1410,67 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     // 查询当日成交记录
                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录...")
                     runWithRetry({
-                        val trades = queryTrades(useCache = false)
+                        val trades = queryTrades(useCache = false).sortedBy { it.time }
                         todayTrades.addAll(trades)
                         trades.forEach { trade ->
+                            // 如果是平仓，那么判断是平今还是平昨，并重新计算手续费
+                            if (trade.offset == OrderOffset.CLOSE) {
+                                val biPosition = positions[trade.code]
+                                val position = when (trade.direction) {
+                                    Direction.SHORT -> biPosition?.long
+                                    Direction.LONG -> biPosition?.short
+                                    else -> null
+                                }
+                                if (position != null) {
+                                    val info = instruments[trade.code]
+                                    if (info != null) {
+                                        // 依据手续费率判断是否优先平今
+                                        val todayFirst = info.closeTodayCommissionRate < info.closeCommissionRate
+                                        // 判断是平昨还是平今
+                                        if (todayFirst) {
+                                            when {
+                                                position.leftTodayOpenVolume >= trade.volume -> {
+                                                    position.leftTodayOpenVolume -= trade.volume
+                                                    trade.offset = OrderOffset.CLOSE_TODAY
+                                                }
+                                                position.leftPreVolume >= trade.volume -> {
+                                                    position.leftPreVolume -= trade.volume
+                                                    trade.offset = OrderOffset.CLOSE_YESTERDAY
+                                                }
+                                                else -> Unit
+                                            }
+                                        } else {
+                                            when {
+                                                position.leftPreVolume >= trade.volume -> {
+                                                    position.leftPreVolume -= trade.volume
+                                                    trade.offset = OrderOffset.CLOSE_YESTERDAY
+                                                }
+                                                position.leftTodayOpenVolume >= trade.volume -> {
+                                                    position.leftTodayOpenVolume -= trade.volume
+                                                    trade.offset = OrderOffset.CLOSE_TODAY
+                                                }
+                                                else -> Unit
+                                            }
+                                        }
+                                        info.calculateTrade(trade)
+                                    }
+                                }
+                            }
                             todayOrders[trade.orderId]?.apply {
                                 turnover += trade.turnover
                                 avgFillPrice = turnover / filledVolume / instruments[trade.code]!!.volumeMultiple
                                 commission += trade.commission
                                 updateTime = maxOf(updateTime, trade.time)
+                            }
+                        }
+                        positions.forEach { (_, bi) ->
+                            bi.long?.extras?.apply {
+                                remove("leftPreVolume")
+                                remove("leftTodayOpenVolume")
+                            }
+                            bi.short?.extras?.apply {
+                                remove("leftPreVolume")
+                                remove("leftTodayOpenVolume")
                             }
                         }
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询当日成交记录成功")

@@ -158,6 +158,16 @@ var Order.insertFeeCalculated: Boolean by BooleanExtrasDelegate.FALSE
 var Order.cancelFeeCalculated: Boolean by BooleanExtrasDelegate.FALSE
 
 /**
+ * 剩余昨仓数量，用于计算判断成交回报的 offset
+ */
+var Position.leftPreVolume: Int by IntExtrasDelegate.ZERO
+
+/**
+ * 剩余今仓数量，用于计算判断成交回报的 offset
+ */
+var Position.leftTodayOpenVolume: Int by IntExtrasDelegate.ZERO
+
+/**
  * 按挂单价从低到高的顺序插入 [order]
  */
 internal fun MutableList<Order>.insert(order: Order) {
