@@ -630,7 +630,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             val requestId = nextRequestId()
             runWithResultCheck<List<Job>>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
                 suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<Job>())
+                    requestMap[requestId] = RequestContinuation(requestId, continuation, tag = "", data = mutableListOf<Job>())
                 }
             }).forEach { it.join() }
         } else {
@@ -646,7 +646,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 val requestId = nextRequestId()
                 runWithResultCheck<List<Job>>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
                     suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                        requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<Job>())
+                        requestMap[requestId] = RequestContinuation(requestId, continuation, tag = code, data = mutableListOf<Job>())
                     }
                 }).forEach { it.join() }
             }
@@ -2422,22 +2422,27 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     // code 可能为具体合约代码（"SHFE.ru2109"），也可能为品种代码（"ru"）。注意 pCommissionRate.exchangeID 为空
                     val code = mdApi.codeMap[pCommissionRate.instrumentID] ?: pCommissionRate.instrumentID
                     val commissionRate = Converter.futuresCommissionRateC2A(pCommissionRate, code)
-                    val instrument = instruments[code]
+                    var instrument = instruments[code]
 //                    var standardCode = ""
-                    // 如果是品种代码，更新 instruments 中所有该品种的手续费
+                    // 如果是品种代码，更新正确合约的手续费（返回品种代码时并不一定所有合约的手续费相同）
                     if (instrument == null) {
-                        val instrumentList = instruments.values.filter {
-                            if (it.type != SecurityType.FUTURES) return@filter false
-                            return@filter it.productId == code
-                        }
-                        if (instrumentList.isNotEmpty()) {
-                            instrumentList.forEach {
-                                commissionRate.copyFieldsToSecurityInfo(it)
-                                commissionRateQueriedCodes.add(it.code)
+                        if (request.tag == "") { // 查询持仓合约手续费的情况
+                            val instrumentList = instruments.values.filter {
+                                if (it.type != SecurityType.FUTURES) return@filter false
+                                return@filter it.productId == code && positions[it.code] != null
                             }
-//                            standardCode = instrumentList.first().code
+                            if (instrumentList.isNotEmpty()) {
+                                instrumentList.forEach {
+                                    commissionRate.copyFieldsToSecurityInfo(it)
+                                    commissionRateQueriedCodes.add(it.code)
+                                }
+//                              standardCode = instrumentList.first().code
+                            }
+                        } else { // 查询具体合约的情况
+                            instrument = instruments[request.tag]
                         }
-                    } else { // 如果是合约代码，直接更新合约
+                    }
+                    if (instrument != null ){
                         commissionRate.copyFieldsToSecurityInfo(instrument)
                         commissionRateQueriedCodes.add(instrument.code)
 //                        standardCode = instrument.code
