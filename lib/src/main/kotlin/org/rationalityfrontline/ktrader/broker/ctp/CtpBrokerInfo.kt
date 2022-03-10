@@ -17,7 +17,7 @@ object CtpBrokerInfo: ApiInfo {
     override val description: String = """
         KTrader 标准交易接口的 CTP 实现
         
-        CTP 版本：${version}
+        编译时间：${BuildInfo.BUILD_DATE}
         
         项目地址： https://github.com/ktrader-tech/ktrader-broker-ctp
         

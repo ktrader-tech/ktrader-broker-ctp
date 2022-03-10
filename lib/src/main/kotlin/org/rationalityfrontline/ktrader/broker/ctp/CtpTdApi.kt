@@ -325,6 +325,40 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         var insertTime: Long? = null
         // 无自成交风险，执行下单操作
         if (errorInfo == null) {
+            var realOffset = offset
+            var realVolume = volume
+            // 如果是平仓，那么判断具体是平昨还是平今
+            if (offset == OrderOffset.CLOSE) {
+                val position = queryCachedPosition(code, direction, true)
+                if (position != null) {
+                    val info = instruments[code]
+                    if (info != null) {
+                        // 依据手续费率判断是否优先平今
+                        val todayFirst = info.closeTodayCommissionRate < info.closeCommissionRate
+                        // 依据仓位及是否优先平今判断是否实际平今
+                        val yesterdayVolume = position.yesterdayVolume()
+                        if (todayFirst) {
+                            when {
+                                position.todayVolume >= volume -> realOffset = OrderOffset.CLOSE_TODAY  //全部平今
+                                position.todayVolume == 0 && yesterdayVolume >= volume -> realOffset = OrderOffset.CLOSE_YESTERDAY  //全部平昨
+                                position.volume >= volume && (code.startsWith(ExchangeID.SHFE) || code.startsWith(ExchangeID.INE)) -> {  //仅平今仓，昨仓会在下次下单时平掉
+                                    realOffset = OrderOffset.CLOSE_TODAY
+                                    realVolume = position.todayVolume
+                                }
+                            }
+                        } else {
+                            when {
+                                yesterdayVolume >= volume -> realOffset = OrderOffset.CLOSE_YESTERDAY  //全部平昨
+                                yesterdayVolume == 0 && position.todayVolume >= volume -> realOffset = OrderOffset.CLOSE_TODAY  //全部平今
+                                position.volume >= volume && (code.startsWith(ExchangeID.SHFE) || code.startsWith(ExchangeID.INE)) -> {  //仅平昨仓，今仓会在下次下单时平掉
+                                    realOffset = OrderOffset.CLOSE_YESTERDAY
+                                    realVolume = yesterdayVolume
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             val reqField = CThostFtdcInputOrderField().apply {
                 this.orderRef = orderRef
                 brokerID = config.brokerId
@@ -333,9 +367,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 instrumentID = instrumentId
                 limitPrice = price
                 this.direction = Converter.directionA2C(direction)
-                volumeTotalOriginal = volume
+                volumeTotalOriginal = realVolume
                 volumeCondition = THOST_FTDC_VC_AV
-                combOffsetFlag = Converter.offsetA2C(offset)
+                combOffsetFlag = Converter.offsetA2C(realOffset)
                 combHedgeFlag = Converter.THOST_FTDC_HF_Speculation
                 contingentCondition = THOST_FTDC_CC_Immediately
                 forceCloseReason = THOST_FTDC_FCC_NotForceClose
