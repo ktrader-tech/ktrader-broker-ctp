@@ -324,9 +324,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         // 用于测试 TickToTrade 的订单插入时间
         var insertTime: Long? = null
         // 无自成交风险，执行下单操作
+        var realOffset = offset
+        var realVolume = volume
         if (errorInfo == null) {
-            var realOffset = offset
-            var realVolume = volume
             // 如果是平仓，那么判断具体是平昨还是平今
             if (offset == OrderOffset.CLOSE) {
                 val position = queryCachedPosition(code, direction, true)
@@ -413,7 +413,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         val now = LocalDateTime.now()
         val order = Order(
             config.investorId, "${frontId}_${sessionId}_${orderRef}", tradingDate,
-            code, instruments[code]?.name ?: code, price, closePositionPrice, volume, minVolume, direction, offset, orderType,
+            code, instruments[code]?.name ?: code, price, closePositionPrice, realVolume, minVolume, direction, realOffset, orderType,
             OrderStatus.SUBMITTING, "报单已提交",
             0, 0.0, 0.0, 0.0, 0.0,
             now, now,
@@ -1938,7 +1938,6 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     var yesterdayClosed = 0
                     when (pTrade.exchangeID) {
                         ExchangeID.SHFE, ExchangeID.INE -> {
-                            trade.offset = order?.offset ?: trade.offset
                             if (trade.offset == OrderOffset.CLOSE) {
                                 trade.offset = OrderOffset.CLOSE_YESTERDAY
                             }
