@@ -1362,41 +1362,37 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     } catch (e: Exception) {
                         resumeConnectWithException("【交易接口登录】请求结算单确认失败：$e", e)
                     }
-                    // 如果是同一交易日断线重连，则可以跳过以下查询
-                    if (newTradingDayOnConnect || hasRequest("connect")) {
-                        // 查询全市场合约
-                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约...")
-                        runWithRetry({
-                            val allInstruments = queryAllSecurities(false, null)
-                            allInstruments.forEach {
-                                instruments[it.code] = it
-                                codeProductMap[it.code] = it.productId
-                                mdApi.codeMap[it.code.split('.', limit = 2)[1]] = it.code
-                            }
-                            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约成功")
-                        }) { e ->
-                            resumeConnectWithException("【交易接口登录】查询全市场合约失败：$e", e)
+                    // 查询全市场合约
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约...")
+                    runWithRetry({
+                        val allInstruments = queryAllSecurities(false, null)
+                        allInstruments.forEach {
+                            instruments[it.code] = it
+                            codeProductMap[it.code] = it.productId
+                            mdApi.codeMap[it.code.split('.', limit = 2)[1]] = it.code
                         }
-                        // 查询保证金价格类型、持仓合约的保证金率及手续费率（如果未禁止费用计算）
-                        // 查询保证金价格类型
-                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型...")
-                        runWithRetry({
-                            queryMarginPriceType()
-                            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型成功")
-                        }) { e ->
-                            resumeConnectWithException("【交易接口登录】查询保证金价格类型失败：$e", e)
-                        }
-                        // 查询持仓合约的手续费率及保证金率
-                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率...")
-                        try {
-                            runWithRetry({ queryFuturesCommissionRate() })
-                            runWithRetry({ queryFuturesMarginRate() })
-                            runWithRetry({ queryOptionsCommissionRate() })
-                            runWithRetry({ queryOptionsMargin() })
-                            api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
-                        } catch (e: Exception) {
-                            resumeConnectWithException("【交易接口登录】查询持仓合约手续费率及保证金率失败：$e", e)
-                        }
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询全市场合约成功")
+                    }) { e ->
+                        resumeConnectWithException("【交易接口登录】查询全市场合约失败：$e", e)
+                    }
+                    // 查询保证金价格类型
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型...")
+                    runWithRetry({
+                        queryMarginPriceType()
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询保证金价格类型成功")
+                    }) { e ->
+                        resumeConnectWithException("【交易接口登录】查询保证金价格类型失败：$e", e)
+                    }
+                    // 查询持仓合约的手续费率及保证金率
+                    api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率...")
+                    try {
+                        runWithRetry({ queryFuturesCommissionRate() })
+                        runWithRetry({ queryFuturesMarginRate() })
+                        runWithRetry({ queryOptionsCommissionRate() })
+                        runWithRetry({ queryOptionsMargin() })
+                        api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询持仓合约手续费率及保证金率成功")
+                    } catch (e: Exception) {
+                        resumeConnectWithException("【交易接口登录】查询持仓合约手续费率及保证金率失败：$e", e)
                     }
                     // 查询账户持仓
                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓...")
@@ -1624,11 +1620,11 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     orderRef.set(9999)
                     nextOrderRef()
                     newTradingDayOnConnect = true
-                    instruments.clear()
-                    codeProductMap.clear()
-                    mdApi.codeMap.clear()
                 }
                 // 清空各种缓存
+                instruments.clear()
+                codeProductMap.clear()
+                mdApi.codeMap.clear()
                 unfinishedLongOrders.clear()
                 unfinishedShortOrders.clear()
                 todayOrders.clear()
