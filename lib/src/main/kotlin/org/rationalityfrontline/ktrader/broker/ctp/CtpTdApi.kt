@@ -73,6 +73,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
      * 是否已调用过 [CThostFtdcTraderApi.Init]
      */
     private var inited = false
+    /** 调用 [CThostFtdcTraderApi.Init] 的时间，用于判断在连接失败是是否需要重连（判断是否在前置机断线情况下进行连接） */
+    private var initTime = System.currentTimeMillis()
     /**
      * 是否在 [connect] 时检测到交易日变更
      */
@@ -251,6 +253,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     suspend fun connect() {
         if (inited) return
         inited = true
+        initTime = System.currentTimeMillis()
         suspendCoroutine<Unit> { continuation ->
             val requestId = Int.MIN_VALUE // 因为 OnFrontConnected 中 requestId 会重置为 0，为防止 requestId 重复，取整数最小值
             requestMap[requestId] = RequestContinuation(requestId, continuation, "connect")
@@ -1335,11 +1338,13 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         reqAuthenticate()
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证成功")
                     } catch (e: Exception) {
-                        if (!hasRequest("connect")) { //说明遇到了晚上 21:00 或早上 09:00 前断线重连时前置服务器尚未完全未初始化的问题
+                        if (!hasRequest("connect") || System.currentTimeMillis() - initTime > 60000) { //说明遇到了晚上 21:00 或早上 09:00 前断线重连时前置服务器尚未完全未初始化的问题
                             launch {
                                 delay(600000)
                                 if (frontConnected && !connected && !doConnecting) {
                                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】已等待10分钟，尝试重新登录...")
+                                    // 刷新 initTime 以防止在登录参数错误时反复登录
+                                    if (hasRequest("connect")) initTime = System.currentTimeMillis()
                                     doConnect()
                                 }
                             }
