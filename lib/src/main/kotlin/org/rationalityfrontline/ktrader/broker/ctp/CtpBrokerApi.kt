@@ -97,6 +97,7 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
         if (brokerStatus != BrokerStatus.CREATED) return
         brokerStatus = BrokerStatus.CONNECTING
         postBrokerLogEvent(LogLevel.INFO, "【CtpBrokerApi.connect】开始连接")
+        tdApi.initTime = System.currentTimeMillis()
         try {
             mdApi.connect()
             tdApi.connect()

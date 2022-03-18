@@ -73,8 +73,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
      * 是否已调用过 [CThostFtdcTraderApi.Init]
      */
     private var inited = false
-    /** 调用 [CThostFtdcTraderApi.Init] 的时间，用于判断在连接失败是是否需要重连（判断是否在前置机断线情况下进行连接） */
-    private var initTime = System.currentTimeMillis()
+    /** 发起登录的时间，用于判断在连接失败是是否需要重连（判断是否在前置机断线情况下进行连接） */
+    var initTime = System.currentTimeMillis()
     /**
      * 是否在 [connect] 时检测到交易日变更
      */
@@ -253,7 +253,6 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     suspend fun connect() {
         if (inited) return
         inited = true
-        initTime = System.currentTimeMillis()
         suspendCoroutine<Unit> { continuation ->
             val requestId = Int.MIN_VALUE // 因为 OnFrontConnected 中 requestId 会重置为 0，为防止 requestId 重复，取整数最小值
             requestMap[requestId] = RequestContinuation(requestId, continuation, "connect")
