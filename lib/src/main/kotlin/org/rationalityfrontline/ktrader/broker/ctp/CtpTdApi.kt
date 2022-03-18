@@ -1325,10 +1325,10 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             api.scope.launch {
                 if (doConnecting) return@launch //避免同一时间段重复连接
                 doConnecting = true
-                fun resumeConnectWithException(errorInfo: String, e: Exception) {
+                fun resumeConnectWithException(errorInfo: String, e: Exception, resumeConnect: Boolean = true) {
                     e.printStackTrace()
                     api.postBrokerLogEvent(LogLevel.ERROR, errorInfo)
-                    resumeRequestsWithException("connect", errorInfo)
+                    if (resumeConnect) resumeRequestsWithException("connect", errorInfo)
                     throw ConnectAbortedException(errorInfo)
                 }
                 try {
@@ -1349,7 +1349,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                                 }
                             }
                         }
-                        resumeConnectWithException("【交易接口登录】请求客户端认证失败：$e", e)
+                        resumeConnectWithException("【交易接口登录】请求客户端认证失败：$e", e, System.currentTimeMillis() - initTime < 60000)
                     }
                     // 请求用户登录
                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】资金账户登录...")
