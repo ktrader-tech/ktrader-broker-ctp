@@ -49,7 +49,7 @@ object CtpBrokerInfo: ApiInfo {
         Pair("AppID", "String 交易终端软件的标识码"),
         Pair("AuthCode", "String 交易终端软件的授权码"),
         Pair("UserProductInfo", "String 交易终端软件的产品信息。默认为空"),
-        Pair("Timeout", "Long 接口调用超时时间（单位：毫秒）。默认为 6000"),
+        Pair("Timeout", "Long 接口调用超时时间（单位：毫秒）。默认为 10000"),
     ).run {
         if (!BuildInfo.IS_PLUGIN) {
             add(Pair("CachePath", "String 存贮订阅信息文件等临时文件的目录。默认为 ./data/ctp/"))

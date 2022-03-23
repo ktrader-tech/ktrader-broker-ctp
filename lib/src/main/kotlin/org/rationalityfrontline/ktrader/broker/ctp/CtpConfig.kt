@@ -12,7 +12,7 @@ package org.rationalityfrontline.ktrader.broker.ctp
  * @param authCode 交易终端软件的授权码
  * @param userProductInfo 交易终端软件的产品信息
  * @param cachePath 存贮订阅信息文件等临时文件的目录
- * @param timeout 接口调用超时时间（单位：毫秒），默认为 6000
+ * @param timeout 接口调用超时时间（单位：毫秒），默认为 10000
  */
 data class CtpConfig(
     val mdFronts: List<String>,
@@ -24,7 +24,7 @@ data class CtpConfig(
     val authCode: String,
     val userProductInfo: String,
     val cachePath: String,
-    val timeout: Long = 6000,
+    val timeout: Long = 10000,
 ) {
     companion object {
         /**
@@ -51,7 +51,7 @@ data class CtpConfig(
                 authCode = config["AuthCode"] ?: "",
                 userProductInfo = config["UserProductInfo"] ?: "",
                 cachePath = config["CachePath"] ?: "",
-                timeout = config["Timeout"]?.toLongOrNull() ?: 6000,
+                timeout = config["Timeout"]?.toLongOrNull() ?: 10000,
             )
         }
     }

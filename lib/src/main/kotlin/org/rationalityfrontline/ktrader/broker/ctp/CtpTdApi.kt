@@ -1155,7 +1155,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         SecurityType.OPTIONS -> optionsMarginPriceType
                         else -> MarginPriceType.PRE_SETTLEMENT_PRICE
                     }
-                    lastTick.calculatePosition(it, marginPriceType, calculateValue = true)
+                    lastTick.calculatePosition(it, null, marginPriceType, calculateValue = true)
                 }
             }
             return positionList
