@@ -75,6 +75,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     private var inited = false
     /** 发起登录的时间，用于判断在连接失败是是否需要重连（判断是否在前置机断线情况下进行连接） */
     var initTime = System.currentTimeMillis()
+    /** 是否存在正在等待中的重连登录操作 */
+    private var hasPendingConnectAction = false
     /**
      * 是否在 [connect] 时检测到交易日变更
      */
@@ -154,11 +156,15 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     /**
      * 做多订单的最高挂单价，用于检测自成交
      */
-    private val maxLongPrice: Double get() = unfinishedLongOrders.firstOrNull()?.price ?: Double.NEGATIVE_INFINITY
+    private fun maxLongPrice(code: String): Double {
+        return unfinishedLongOrders.lastOrNull { it.code == code }?.price ?: Double.NEGATIVE_INFINITY
+    }
     /**
      * 做空订单的最低挂单价，用于检测自成交
      */
-    private val minShortPrice: Double get() = unfinishedShortOrders.lastOrNull()?.price ?: Double.POSITIVE_INFINITY
+    private fun minShortPrice(code: String): Double {
+        return unfinishedShortOrders.firstOrNull { it.code == code }?.price ?: Double.POSITIVE_INFINITY
+    }
     /**
      * 合约撤单次数统计，用于检测频繁撤单，key 为 code，value 为撤单次数
      */
@@ -305,6 +311,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         val orderRef = nextOrderRef().toString()
         // 检查是否存在自成交风险
         var errorInfo: String? = null
+        val minShortPrice = minShortPrice(code)
+        val maxLongPrice = maxLongPrice(code)
         when {
             direction == Direction.LONG && price >= minShortPrice -> {
                 val lastTick = mdApi.lastTicks[code]
@@ -1337,9 +1345,11 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         reqAuthenticate()
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】客户端认证成功")
                     } catch (e: Exception) {
-                        if (!hasRequest("connect") || System.currentTimeMillis() - initTime > 60000) { //说明遇到了晚上 21:00 或早上 09:00 前断线重连时前置服务器尚未完全未初始化的问题
+                        if ((!hasRequest("connect") || System.currentTimeMillis() - initTime > 60000) && !hasPendingConnectAction) { //说明遇到了晚上 21:00 或早上 09:00 前断线重连时前置服务器尚未完全未初始化的问题
+                            hasPendingConnectAction = true
                             launch {
                                 delay(600000)
+                                hasPendingConnectAction = false
                                 if (frontConnected && !connected && !doConnecting) {
                                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】已等待10分钟，尝试重新登录...")
                                     // 刷新 initTime 以防止在登录参数错误时反复登录
@@ -1348,7 +1358,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                                 }
                             }
                         }
-                        resumeConnectWithException("【交易接口登录】请求客户端认证失败：$e", e, System.currentTimeMillis() - initTime < 60000)
+                        resumeConnectWithException("【交易接口登录】请求客户端认证失败：$e", e, !hasPendingConnectAction)
                     }
                     // 请求用户登录
                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】资金账户登录...")
@@ -1553,11 +1563,13 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             api.postBrokerLogEvent(LogLevel.INFO, msg)
             frontConnected = false
             connected = false
+            var toClear: List<RequestContinuation> = requestMap.values.toList()
+            if (hasPendingConnectAction) toClear = toClear.filter { it.tag != "connect" }
             val e = Exception(msg)
-            requestMap.values.forEach {
+            toClear.forEach {
                 it.continuation.resumeWithException(e)
+                requestMap.remove(it.requestId)
             }
-            requestMap.clear()
         }
 
         /**
