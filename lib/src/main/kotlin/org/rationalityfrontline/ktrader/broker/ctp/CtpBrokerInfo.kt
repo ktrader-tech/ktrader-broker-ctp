@@ -10,12 +10,12 @@ object CtpBrokerInfo: ApiInfo {
 
     override val name: String = "CTP"
 
-    override val version: String = CThostFtdcTraderApi.GetApiVersion()
+    override val version: String = "${BuildInfo.VERSION}-${CThostFtdcTraderApi.GetApiVersion()}"
 
     override val author: String = "RationalityFrontline"
 
     override val description: String = """
-        KTrader 标准交易接口的 CTP 实现
+        KTrader-API 中 Broker 接口的 CTP 实现
         
         编译时间：${BuildInfo.BUILD_DATE}
         
