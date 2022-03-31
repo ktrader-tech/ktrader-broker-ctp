@@ -32,19 +32,19 @@ repositories {
 }
 
 dependencies {
-    val depPf4j = "org.rationalityfrontline.workaround:pf4j:3.7.1"
-    val depKTraderApi = "org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires"
-    val depJCTP = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.4"
+    val pf4j = "org.rationalityfrontline.workaround:pf4j:3.7.1"
+    val ktrader_api = "org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires"
+    val jctp = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.4"
     if (asPlugin) {  // 发布为 ZIP 插件
         compileOnly(kotlin("stdlib"))
-        compileOnly(depKTraderApi)
-        compileOnly(depPf4j)
-        kapt(depPf4j)
-        implementation(depJCTP) { exclude(group = "org.slf4j", module = "slf4j-api") }
+        compileOnly(ktrader_api)
+        compileOnly(pf4j)
+        kapt(pf4j)
+        implementation(jctp) { exclude(group = "org.slf4j", module = "slf4j-api") }
     } else {  // 发布到 Maven 仓库
-        api(depKTraderApi)
-        compileOnly(depPf4j)
-        implementation(depJCTP)
+        api(ktrader_api)
+        compileOnly(pf4j)
+        implementation(jctp)
     }
 }
 
