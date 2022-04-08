@@ -13,6 +13,9 @@ class CtpBrokerExtension : BrokerExtension(), ApiInfo by CtpBrokerInfo {
     override val configKeys: List<Pair<String, String>> = CtpBrokerInfo.configKeys
 
     override fun createApi(config: Map<String, String>): BrokerApi {
-        return CtpBrokerApi(CtpConfig.fromMap(config))
+        val c = if ("DataDir" in config && "CachePath" !in config) {
+            config.toMutableMap().apply { put("CachePath", "${config["DataDir"]!!.removeSuffix("/")}/cache/") }
+        } else config
+        return CtpBrokerApi(CtpConfig.fromMap(c))
     }
 }
