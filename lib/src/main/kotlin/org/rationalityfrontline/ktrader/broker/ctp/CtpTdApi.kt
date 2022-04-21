@@ -19,6 +19,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
+import kotlin.math.abs
 import kotlin.math.sign
 
 internal class CtpTdApi(val api: CtpBrokerApi) {
@@ -906,11 +907,13 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
      * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
      * 如果之前没查过，会耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
      * @param underlyingCode 期权标的物的代码
-     * @param type 期权的类型，默认为 null，表示返回所有类型的期权
+     * @param type 期权的类型，默认为 [OptionsType.UNKNOWN]，表示返回所有类型的期权
+     * @param strikePrice 行权价，默认为 null，表示返回所有行权价的期权。如果不存在该行权价的合约，则返回最接近该行权价的合约
      */
     suspend fun queryOptions(
         underlyingCode: String,
         type: OptionsType = OptionsType.UNKNOWN,
+        strikePrice: Double?,
         useCache: Boolean = true,
         extras: Map<String, String>? = null
     ): List<SecurityInfo> {
@@ -919,16 +922,42 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         } else {
             { info: SecurityInfo -> info.type == SecurityType.OPTIONS && info.optionsUnderlyingCode == underlyingCode && info.optionsType == type }
         }
-        if (useCache && instruments.isNotEmpty()) {
+        val results = if (useCache && instruments.isNotEmpty()) {
             val results = instruments.values.filter(predicate)
             if (extras?.get("ensureFullInfo") != "false") {
                 results.forEach {
                     ensureFullSecurityInfo(it.code)
                 }
             }
-            return results
+            results
+        } else queryAllSecurities(useCache = false).filter(predicate)
+        return if (strikePrice == null || results.isEmpty()) results else {
+            val finalResults = mutableListOf<SecurityInfo>()
+            val sortedResults = results.sortedBy { it.optionsStrikePrice }
+            val index = sortedResults.binarySearchBy(strikePrice) { it.optionsStrikePrice }
+            if (index >= 0) {
+                finalResults.add(sortedResults[index])
+            } else {
+                val insertIndex = -1 - index
+                val leftIndex = insertIndex - 1
+                val leftInfo = sortedResults.getOrNull(leftIndex)
+                val rightInfo = sortedResults.getOrNull(insertIndex)
+                if (leftInfo != null && rightInfo != null) {
+                    val leftDelta = abs(strikePrice - leftInfo.optionsStrikePrice)
+                    val rightDelta = abs(strikePrice - leftInfo.optionsStrikePrice)
+                    when {
+                        leftDelta > rightDelta -> finalResults.add(rightInfo)
+                        leftDelta < rightDelta -> finalResults.add(leftInfo)
+                        leftDelta == rightDelta -> finalResults.addAll(arrayOf(leftInfo, rightInfo))
+                    }
+                } else if (leftInfo != null) {
+                    finalResults.add(leftInfo)
+                } else if (rightInfo != null) {
+                    finalResults.add(rightInfo)
+                }
+            }
+            finalResults
         }
-        return queryAllSecurities(useCache = false).filter(predicate)
     }
 
     /**
@@ -1421,7 +1450,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     }) { e ->
                         resumeConnectWithException("【交易接口登录】查询账户持仓失败：$e", e)
                     }
-                    // 订阅持仓合约行情（如果行情可用且未禁止自动订阅）
+                    // 订阅持仓合约行情
                     if (mdApi.connected) {
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】订阅持仓合约行情...")
                         try {

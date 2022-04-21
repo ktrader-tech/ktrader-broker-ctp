@@ -11,7 +11,6 @@ import org.rationalityfrontline.kevent.KEvent
 import org.rationalityfrontline.kevent.SubscriberThreadMode
 import org.rationalityfrontline.ktrader.api.ApiInfo
 import org.rationalityfrontline.ktrader.api.broker.*
-import org.rationalityfrontline.ktrader.api.data.DataApi
 import org.rationalityfrontline.ktrader.api.datatype.*
 import java.time.LocalDate
 
@@ -63,13 +62,6 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
             if (field == value) return
             field = value
             postBrokerEvent(BrokerEventType.CUSTOM_EVENT, CustomEvent("TICK_TO_TRADE", value.toString()))
-        }
-
-    override var dataApi: DataApi? = null
-        set(value) {
-            if (field == value) return
-            field = value
-            postBrokerEvent(BrokerEventType.CUSTOM_EVENT, CustomEvent("DATA_API", value?.account ?: ""))
         }
 
     init {
@@ -189,10 +181,11 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
     override suspend fun queryOptions(
         underlyingCode: String,
         type: OptionsType,
+        strikePrice: Double?,
         useCache: Boolean,
         extras: Map<String, String>?
     ): List<SecurityInfo> {
-        return runWithRetry({ tdApi.queryOptions(underlyingCode, type, useCache, extras) })
+        return runWithRetry({ tdApi.queryOptions(underlyingCode, type, strikePrice, useCache, extras) })
     }
 
     override suspend fun insertOrder(
