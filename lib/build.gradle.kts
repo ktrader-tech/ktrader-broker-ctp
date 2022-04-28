@@ -1,3 +1,5 @@
+@file:Suppress("PropertyName", "LocalVariableName")
+
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.time.LocalDateTime
 
@@ -19,7 +21,7 @@ val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
 val asPlugin = true  // 是否作为插件编译
 
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
-val pluginId = "KT-CTP"
+val pluginId = "KTB-CTP"
 val pluginVersion = version as String
 val pluginRequires = "0.2.0"
 val pluginDescription = DESC
@@ -134,7 +136,7 @@ publishing {
                 licenses {
                     license {
                         name.set("The Apache Software License, Version 2.0")
-                        url.set("http://www.apache.org/licenses/LICENSE-2.0.txt")
+                        url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
                     }
                 }
                 developers {

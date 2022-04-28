@@ -1,4 +1,4 @@
-@file:Suppress("UNCHECKED_CAST", "UNUSED_PARAMETER", "MemberVisibilityCanBePrivate")
+@file:Suppress("UNCHECKED_CAST", "UNUSED_PARAMETER")
 
 package org.rationalityfrontline.ktrader.broker.ctp
 
@@ -225,6 +225,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     /**
      * 判断是否存在标签为 [tag] 的未完成的协程请求
      */
+    @Suppress("SameParameterValue")
     private fun hasRequest(tag: String): Boolean {
         return requestMap.values.find { it.tag == tag } != null
     }
@@ -704,19 +705,19 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
      * 查询期货申报手续费，仅限中金所。
      * 已查过手续费的依然会再次查询。查询到的结果会自动更新到对应的 [instruments] 中
      */
-    private suspend fun queryFuturesOrderCommissionRate(code: String) {
-        val qryField = CThostFtdcQryInstrumentOrderCommRateField().apply {
-            brokerID = config.brokerId
-            investorID = config.investorId
-            instrumentID = parseCode(code).second
-        }
-        val requestId = nextRequestId()
-        runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentOrderCommRate(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation)
-            }
-        })
-    }
+//    private suspend fun queryFuturesOrderCommissionRate(code: String) {
+//        val qryField = CThostFtdcQryInstrumentOrderCommRateField().apply {
+//            brokerID = config.brokerId
+//            investorID = config.investorId
+//            instrumentID = parseCode(code).second
+//        }
+//        val requestId = nextRequestId()
+//        runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentOrderCommRate(qryField, requestId) }, {
+//            suspendCoroutineWithTimeout(config.timeout) { continuation ->
+//                requestMap[requestId] = RequestContinuation(requestId, continuation)
+//            }
+//        })
+//    }
 
     /**
      * 查询期权手续费率，如果 [code] 为 null（默认），则查询所有当前持仓合约的手续费率。
@@ -1440,11 +1441,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     // 查询账户持仓
                     api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓...")
                     runWithRetry({
-                        queryPositions(useCache = false).apply {
-                            forEach {
-                                it.leftPreVolume = it.preVolume
-                                it.leftTodayOpenVolume = it.todayOpenVolume
-                            }
+                        queryPositions(useCache = false).onEach {
+                            it.leftPreVolume = it.preVolume
+                            it.leftTodayOpenVolume = it.todayOpenVolume
                         }
                         api.postBrokerLogEvent(LogLevel.INFO, "【交易接口登录】查询账户持仓成功")
                     }) { e ->
@@ -2546,35 +2545,35 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         /**
          * 期货申报手续费率查询，仅限中金所
          */
-        override fun OnRspQryInstrumentOrderCommRate(
-            pOrderCommRate: CThostFtdcInstrumentOrderCommRateField?,
-            pRspInfo: CThostFtdcRspInfoField?,
-            nRequestID: Int,
-            bIsLast: Boolean
-        ) {
-            val request = requestMap[nRequestID] ?: return
-            checkRspInfo(pRspInfo, {
-                // 目前只有 IC, IH, IF 能查到挂单撤单手续费，并且每个品种会返回 3 条 hedgeFlag 分别为 1, 3, 2 的其余字段相同的记录
-                if (pOrderCommRate != null && pOrderCommRate.hedgeFlag == THOST_FTDC_HF_Speculation) {
-                    val commissionList = instruments.values.filter {
-                        if (it.type != SecurityType.FUTURES) return@filter false
-                        return@filter it.productId == pOrderCommRate.instrumentID
-                    }.forEach {
+//        override fun OnRspQryInstrumentOrderCommRate(
+//            pOrderCommRate: CThostFtdcInstrumentOrderCommRateField?,
+//            pRspInfo: CThostFtdcRspInfoField?,
+//            nRequestID: Int,
+//            bIsLast: Boolean
+//        ) {
+//            val request = requestMap[nRequestID] ?: return
+//            checkRspInfo(pRspInfo, {
+//                // 目前只有 IC, IH, IF 能查到挂单撤单手续费，并且每个品种会返回 3 条 hedgeFlag 分别为 1, 3, 2 的其余字段相同的记录
+//                if (pOrderCommRate != null && pOrderCommRate.hedgeFlag == THOST_FTDC_HF_Speculation) {
+//                    instruments.values.filter {
+//                        if (it.type != SecurityType.FUTURES) return@filter false
+//                        return@filter it.productId == pOrderCommRate.instrumentID
+//                    }.forEach {
 //                        it.orderInsertFeeByTrade = pOrderCommRate.orderCommByTrade
 //                        it.orderInsertFeeByVolume = pOrderCommRate.orderCommByVolume
 //                        it.orderCancelFeeByTrade = pOrderCommRate.orderActionCommByTrade
 //                        it.orderCancelFeeByVolume = pOrderCommRate.orderActionCommByVolume
-                    }
-                }
-                if (bIsLast) {
-                    (request.continuation as Continuation<Unit>).resume(Unit)
-                    requestMap.remove(nRequestID)
-                }
-            }) { errorCode, errorMsg ->
-                request.continuation.resumeWithException(Exception("$errorMsg ($errorCode)"))
-                requestMap.remove(nRequestID)
-            }
-        }
+//                    }
+//                }
+//                if (bIsLast) {
+//                    (request.continuation as Continuation<Unit>).resume(Unit)
+//                    requestMap.remove(nRequestID)
+//                }
+//            }) { errorCode, errorMsg ->
+//                request.continuation.resumeWithException(Exception("$errorMsg ($errorCode)"))
+//                requestMap.remove(nRequestID)
+//            }
+//        }
 
         /**
          * 期权手续费率查询请求响应，会自动更新 [instruments] 中对应的手续费率信息

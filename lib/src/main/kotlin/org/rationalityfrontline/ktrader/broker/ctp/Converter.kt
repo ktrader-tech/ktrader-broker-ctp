@@ -6,12 +6,10 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import kotlin.math.max
 
 /**
  * 翻译器，用于将本地的 CTP 信息翻译为标准的 BrokerApi 信息
  */
-@Suppress("MemberVisibilityCanBePrivate")
 internal object Converter {
 
     private val THOST_FTDC_OF_Open_S = jctpConstants.THOST_FTDC_OF_Open.toString()
@@ -68,6 +66,7 @@ internal object Converter {
         }
     }
 
+    @Suppress("MemberVisibilityCanBePrivate")
     fun offsetC2A(offset: String): OrderOffset {
         return when (offset) {
             THOST_FTDC_OF_Open_S -> OrderOffset.OPEN
@@ -96,8 +95,8 @@ internal object Converter {
             LocalDateTime.now()
         }
         val lastPrice = formatDouble(tickField.lastPrice)
-        val bidPrice = arrayOf(formatDouble(tickField.bidPrice1), formatDouble(tickField.bidPrice2), formatDouble(tickField.bidPrice3), formatDouble(tickField.bidPrice4), formatDouble(tickField.bidPrice5))
-        val askPrice = arrayOf(formatDouble(tickField.askPrice1), formatDouble(tickField.askPrice2), formatDouble(tickField.askPrice3), formatDouble(tickField.askPrice4), formatDouble(tickField.askPrice5))
+        val bidPrice = doubleArrayOf(formatDouble(tickField.bidPrice1), formatDouble(tickField.bidPrice2), formatDouble(tickField.bidPrice3), formatDouble(tickField.bidPrice4), formatDouble(tickField.bidPrice5))
+        val askPrice = doubleArrayOf(formatDouble(tickField.askPrice1), formatDouble(tickField.askPrice2), formatDouble(tickField.askPrice3), formatDouble(tickField.askPrice4), formatDouble(tickField.askPrice5))
         val volumeMultiple = info?.volumeMultiple ?: 1
         if (code.startsWith("CZCE")) {
             tickField.turnover *= volumeMultiple
@@ -111,8 +110,8 @@ internal object Converter {
             prePrice = lastTick?.price ?: lastPrice,
             bidPrice = bidPrice,
             askPrice = askPrice,
-            bidVolume = arrayOf(tickField.bidVolume1, tickField.bidVolume2, tickField.bidVolume3, tickField.bidVolume4, tickField.bidVolume5),
-            askVolume = arrayOf(tickField.askVolume1, tickField.askVolume2, tickField.askVolume3, tickField.askVolume4, tickField.askVolume5),
+            bidVolume = intArrayOf(tickField.bidVolume1, tickField.bidVolume2, tickField.bidVolume3, tickField.bidVolume4, tickField.bidVolume5),
+            askVolume = intArrayOf(tickField.askVolume1, tickField.askVolume2, tickField.askVolume3, tickField.askVolume4, tickField.askVolume5),
             volume = tickField.volume - (lastTick?.todayVolume ?: tickField.volume),
             turnover = tickField.turnover - (lastTick?.todayTurnover ?: tickField.turnover),
             openInterestDelta = tickField.openInterest.toInt() - (lastTick?.todayOpenInterest ?: tickField.openInterest.toInt()),

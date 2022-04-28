@@ -220,12 +220,6 @@ data class CommissionRate(
     var optionsStrikeRatioByVolume: Double = 0.0,
     override var extras: MutableMap<String, String>? = null,
 ) : ExtrasEntity {
-    /**
-     * 返回一份自身的完全拷贝
-     */
-    fun deepCopy(): CommissionRate {
-        return copy(extras = extras?.toMutableMap())
-    }
 
     /**
      * 将手续费率处理后赋值给 [info] 的对应字段
@@ -249,6 +243,7 @@ data class CommissionRate(
  * @property optionsExchangeFixedMargin 期权卖方交易所固定保证金（实际字段为 [longMarginRatioByVolume]）
  * @property optionsExchangeMinMargin 期权卖方交易所最小保证金（实际字段为 [shortMarginRatioByVolume]），目前全部为 0.0
  */
+@Suppress("MemberVisibilityCanBePrivate")
 data class MarginRate(
     var code: String,
     var longMarginRatioByMoney: Double,
@@ -261,13 +256,6 @@ data class MarginRate(
     var optionsMinMargin: Double by ::shortMarginRatioByMoney
     var optionsExchangeFixedMargin: Double by ::longMarginRatioByVolume
     var optionsExchangeMinMargin: Double by ::shortMarginRatioByVolume
-
-    /**
-     * 返回一份自身的完全拷贝
-     */
-    fun deepCopy(): MarginRate {
-        return copy(extras = extras?.toMutableMap())
-    }
 
     /**
      * 将保证金率处理后赋值给 [info] 的对应字段

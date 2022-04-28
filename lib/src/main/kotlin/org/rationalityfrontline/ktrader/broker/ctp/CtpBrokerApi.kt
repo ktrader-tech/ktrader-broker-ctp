@@ -1,5 +1,3 @@
-@file:Suppress("JoinDeclarationAndAssignment")
-
 package org.rationalityfrontline.ktrader.broker.ctp
 
 import kotlinx.coroutines.CoroutineScope
@@ -19,8 +17,13 @@ import java.time.LocalDate
  */
 class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo {
     
-    private val mdApi: CtpMdApi
-    private val tdApi: CtpTdApi
+    private val mdApi: CtpMdApi = CtpMdApi(this)
+    private val tdApi: CtpTdApi = CtpTdApi(this)
+
+    init {
+        mdApi.tdApi = tdApi
+        tdApi.mdApi = mdApi
+    }
 
     override val account: String = this.config.investorId
     override var brokerStatus: BrokerStatus = BrokerStatus.CREATED
@@ -63,13 +66,6 @@ class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo 
             field = value
             postBrokerEvent(BrokerEventType.CUSTOM_EVENT, CustomEvent("TICK_TO_TRADE", value.toString()))
         }
-
-    init {
-        mdApi = CtpMdApi(this)
-        tdApi = CtpTdApi(this)
-        mdApi.tdApi = tdApi
-        tdApi.mdApi = mdApi
-    }
 
     /**
      * 向 [kEvent] 发送一条 [BrokerEvent]

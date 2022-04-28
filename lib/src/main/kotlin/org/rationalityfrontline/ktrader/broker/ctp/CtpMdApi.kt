@@ -1,4 +1,4 @@
-@file:Suppress("UNCHECKED_CAST", "UNUSED_PARAMETER", "MemberVisibilityCanBePrivate", "CanBeParameter")
+@file:Suppress("UNCHECKED_CAST", "UNUSED_PARAMETER")
 
 package org.rationalityfrontline.ktrader.broker.ctp
 
@@ -19,7 +19,7 @@ import kotlin.coroutines.suspendCoroutine
 import kotlin.math.min
 
 internal class CtpMdApi(val api: CtpBrokerApi) {
-    val config: CtpConfig = api.config
+    private val config: CtpConfig = api.config
     private val mdApi: CThostFtdcMdApi
     private val mdSpi: CtpMdSpi
     /**

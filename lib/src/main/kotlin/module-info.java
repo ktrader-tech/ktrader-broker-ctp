@@ -1,4 +1,4 @@
-@SuppressWarnings("requires-transitive-automatic")
+@SuppressWarnings({"requires-transitive-automatic", "JavaRequiresAutoModule"})
 module ktrader.broker.ctp {
     requires transitive kotlin.stdlib;
     requires transitive kotlinx.coroutines.core.jvm;

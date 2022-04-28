@@ -125,9 +125,9 @@ repositories {
 }
 
 dependencies {
-    implementation("org.rationalityfrontline.ktrader:ktrader-broker-ctp:1.3.0")
+    implementation("org.rationalityfrontline.ktrader:ktrader-broker-ctp:1.3.1")
     // 如果需要使用其它版本的 JCTP，取消注释下面一行，并填入自己需要的版本号
-//    implementation("org.rationalityfrontline:jctp") { version { strictly("6.6.1_P1_CP-1.0.3") } }
+//    implementation("org.rationalityfrontline:jctp") { version { strictly("6.6.1_P1_CP-1.0.4") } }
 }
 ```
 
@@ -137,7 +137,7 @@ dependencies {
 <dependency>
     <groupId>org.rationalityfrontline.ktrader</groupId>
     <artifactId>ktrader-broker-ctp</artifactId>
-    <version>1.3.0</version>
+    <version>1.3.1</version>
 </dependency>
 ```
 
@@ -154,13 +154,13 @@ JCTP jar 下载地址：[Maven Repository](https://repo1.maven.org/maven2/org/ra
 KTrader-Broker-CTP is released under the [Apache 2.0 license](https://github.com/ktrader-tech/ktrader-broker-ctp/blob/master/LICENSE).
 
 ```
-Copyright 2021 RationalityFrontline
+Copyright 2022 RationalityFrontline
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
