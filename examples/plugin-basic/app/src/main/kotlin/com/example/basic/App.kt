@@ -8,6 +8,7 @@ import org.rationalityfrontline.ktrader.api.broker.BrokerEvent
 import org.rationalityfrontline.ktrader.api.broker.BrokerEventType
 import org.rationalityfrontline.ktrader.api.broker.BrokerExtension
 import org.rationalityfrontline.ktrader.api.datatype.Tick
+import java.io.File
 import java.nio.file.Path
 
 private fun testCtpApi(brokerExtension: BrokerExtension) {
@@ -28,7 +29,7 @@ private fun testCtpApi(brokerExtension: BrokerExtension) {
         "Timeout" to "6000",  // 接口调用超时时间（单位：毫秒）
     )
     // 创建 CtpBrokerApi 实例
-    val api = brokerExtension.createApi(config)
+    val api = brokerExtension.createApi(config, File("./data/ctp"))
     // 订阅所有事件
     api.kEvent.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList(), tag = api.sourceId) { event -> runBlocking {
         // 处理事件推送
