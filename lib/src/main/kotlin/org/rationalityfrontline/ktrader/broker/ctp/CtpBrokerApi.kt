@@ -4,18 +4,24 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import mu.KLogger
 import org.rationalityfrontline.kevent.EventDispatchMode
 import org.rationalityfrontline.kevent.KEvent
 import org.rationalityfrontline.kevent.SubscriberThreadMode
 import org.rationalityfrontline.ktrader.api.ApiInfo
 import org.rationalityfrontline.ktrader.api.broker.*
 import org.rationalityfrontline.ktrader.api.datatype.*
+import java.io.File
 import java.time.LocalDate
 
 /**
  * [BrokerApi] 的 CTP 实现
  */
-class CtpBrokerApi(val config: CtpConfig) : BrokerApi, ApiInfo by CtpBrokerInfo {
+class CtpBrokerApi(
+    private val dataDir: File,
+    private val logger: KLogger,
+    val config: CtpConfig,
+) : BrokerApi, ApiInfo by CtpBrokerInfo {
     
     private val mdApi: CtpMdApi = CtpMdApi(this)
     private val tdApi: CtpTdApi = CtpTdApi(this)

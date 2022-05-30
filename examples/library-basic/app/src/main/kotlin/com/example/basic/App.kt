@@ -2,11 +2,13 @@ package com.example.basic
 
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import mu.KotlinLogging
 import org.rationalityfrontline.ktrader.api.broker.BrokerEvent
 import org.rationalityfrontline.ktrader.api.broker.BrokerEventType
 import org.rationalityfrontline.ktrader.api.datatype.*
 import org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerApi
 import org.rationalityfrontline.ktrader.broker.ctp.CtpConfig
+import java.io.File
 
 fun main() {
     println("------------ 启动 ------------")
@@ -24,7 +26,7 @@ fun main() {
         timeout = 6000,  // 接口调用超时时间（单位：毫秒）
     )
     // 创建 CtpBrokerApi 实例
-    val api = CtpBrokerApi(config)
+    val api = CtpBrokerApi(File("./data/ctp"), KotlinLogging.logger { }, config)
     println(api.version)
     // 设置 TickToTrade 测试
     var tttTestCount = 0
@@ -67,7 +69,7 @@ fun main() {
         println(api.queryOrders(onlyUnfinished = false).joinToString("\n"))
         println("查询当日全部成交记录：")
         println(api.queryTrades().joinToString("\n"))
-        api.subscribeTick("DCE.m2205")
+        api.subscribeTick("DCE.m2209")
         delay(10000)
         api.close()
         println("CTP 已关闭")

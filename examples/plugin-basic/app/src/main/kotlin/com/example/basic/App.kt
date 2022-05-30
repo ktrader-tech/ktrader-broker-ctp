@@ -1,6 +1,7 @@
 package com.example.basic
 
 import kotlinx.coroutines.runBlocking
+import mu.KotlinLogging
 import org.pf4j.DefaultPluginManager
 import org.pf4j.ExtensionFactory
 import org.pf4j.SingletonExtensionFactory
@@ -29,7 +30,7 @@ private fun testCtpApi(brokerExtension: BrokerExtension) {
         "Timeout" to "6000",  // 接口调用超时时间（单位：毫秒）
     )
     // 创建 CtpBrokerApi 实例
-    val api = brokerExtension.createApi(config, File("./data/ctp"))
+    val api = brokerExtension.createApi(File("./data/ctp"), KotlinLogging.logger { }, config)
     // 订阅所有事件
     api.kEvent.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList(), tag = api.sourceId) { event -> runBlocking {
         // 处理事件推送
@@ -63,7 +64,7 @@ fun main() {
     val deleteOnFinish = false  // 是否运行完后删除插件
     val pluginManager = object : DefaultPluginManager(Path.of("./plugins/")) {
         override fun createExtensionFactory(): ExtensionFactory {
-            return SingletonExtensionFactory()
+            return SingletonExtensionFactory(this)
         }
     }
     pluginManager.addPluginStateListener { event ->

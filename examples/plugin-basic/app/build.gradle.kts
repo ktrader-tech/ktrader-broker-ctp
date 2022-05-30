@@ -11,7 +11,7 @@ repositories {
 }
 
 dependencies {
-    implementation("org.rationalityfrontline.workaround:pf4j:3.7.0")
+    implementation("org.rationalityfrontline.workaround:pf4j:3.7.1")
     implementation("org.rationalityfrontline.ktrader:ktrader-api:0.2.0")
 }
 
