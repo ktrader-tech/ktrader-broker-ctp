@@ -34,7 +34,7 @@ repositories {
 }
 
 dependencies {
-    val pf4j = "org.rationalityfrontline.workaround:pf4j:3.7.1"
+    val pf4j = "org.pf4j:pf4j:3.7.0"
     val ktrader_api = "org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires"
     val jctp = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.4"
     if (asPlugin) {  // 发布为 ZIP 插件

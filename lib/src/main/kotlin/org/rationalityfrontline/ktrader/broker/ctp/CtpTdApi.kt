@@ -770,7 +770,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 resultTick = cachedTick
             }
         }
-        if (resultTick == null) {
+        if (resultTick == null && !code.contains(' ')) {
             val qryField = CThostFtdcQryDepthMarketDataField().apply {
                 instrumentID = parseCode(code).second
             }
