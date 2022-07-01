@@ -117,8 +117,8 @@ class CtpBrokerApi(
 
     override suspend fun getTradingDay(extras: Map<String, String>?): LocalDate {
         val tradingDay = when {
-            mdConnected -> mdApi.getTradingDay()
             tdConnected -> tdApi.getTradingDay()
+            mdConnected -> mdApi.getTradingDay()
             else -> null
         }
         return if (tradingDay == null) {

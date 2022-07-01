@@ -294,7 +294,6 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                     return
                 }
                 api.postBrokerLogEvent(LogLevel.INFO, "【行情接口登录】登录成功")
-                connected = true
                 subscriptions.clear()
                 if (tradingDay == pRspUserLogin.tradingDay) {
                     // 如果当日已订阅列表不为空，则说明发生了日内断网重连，自动重新订阅
@@ -312,6 +311,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                     preSubscriptions.clear()
                     tradingDay = pRspUserLogin.tradingDay
                 }
+                connected = true
                 resumeRequests("connect", Unit)
             }, { errorCode, errorMsg ->
                 resumeRequestsWithException("connect", "【CtpMdSpi.OnRspUserLogin】请求用户登录失败：$errorMsg ($errorCode)")
