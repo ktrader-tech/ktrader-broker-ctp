@@ -4,17 +4,17 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.time.LocalDateTime
 
 plugins {
-    kotlin("jvm") version "1.6.10"
-    kotlin("kapt") version "1.6.10"
+    kotlin("jvm") version "1.6.20"
+    kotlin("kapt") version "1.6.20"
     `java-library`
     `maven-publish`
     signing
-    id("org.jetbrains.dokka") version "1.6.0"
-    id("org.javamodularity.moduleplugin") version "1.8.10"
+    id("org.jetbrains.dokka") version "1.6.20"
+    id("org.javamodularity.moduleplugin") version "1.8.11"
 }
 
 group = "org.rationalityfrontline.ktrader"
-version = "1.3.1"
+version = "1.3.2"
 val NAME = "ktrader-broker-ctp"
 val DESC = "KTrader-API 中 Broker 接口的 CTP 实现"
 val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
@@ -23,7 +23,7 @@ val asPlugin = true  // 是否作为插件编译
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = "KTB-CTP"
 val pluginVersion = version as String
-val pluginRequires = "0.2.0"
+val pluginRequires = "0.3.0"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"
@@ -36,15 +36,21 @@ repositories {
 dependencies {
     val pf4j = "org.pf4j:pf4j:3.7.0"
     val ktrader_api = "org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires"
+    val kotlin_coroutines = "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.2"
+    val kevent = "org.rationalityfrontline:kevent:2.1.2"
     val jctp = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.4"
     if (asPlugin) {  // 发布为 ZIP 插件
         compileOnly(kotlin("stdlib"))
         compileOnly(ktrader_api)
+        compileOnly(kotlin_coroutines)
+        compileOnly(kevent)
         compileOnly(pf4j)
         kapt(pf4j)
         implementation(jctp) { exclude(group = "org.slf4j", module = "slf4j-api") }
     } else {  // 发布到 Maven 仓库
         api(ktrader_api)
+        api(kevent)
+        api(kotlin_coroutines)
         compileOnly(pf4j)
         implementation(jctp)
     }

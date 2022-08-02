@@ -12,7 +12,7 @@ class CtpBrokerExtension : BrokerExtension(), ApiInfo by CtpBrokerInfo {
 
     override val configKeys: List<Pair<String, String>> = CtpBrokerInfo.configKeys
 
-    override fun createApi(dataDir: File, logger: KLogger, config: Map<String, String>): BrokerApi {
+    override fun createApi(dataDir: File, logger: KLogger, version: String, id: String, config: Map<String, String>): BrokerApi {
         val c = if ("CachePath" !in config) {
             config.toMutableMap().apply { put("CachePath", "${dataDir.canonicalPath}/cache/") }
         } else config
