@@ -4,13 +4,13 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.time.LocalDateTime
 
 plugins {
-    kotlin("jvm") version "1.6.20"
-    kotlin("kapt") version "1.6.20"
+    kotlin("jvm") version "1.7.10"
+    kotlin("kapt") version "1.7.10"
     `java-library`
     `maven-publish`
     signing
-    id("org.jetbrains.dokka") version "1.6.20"
-    id("org.javamodularity.moduleplugin") version "1.8.11"
+    id("org.jetbrains.dokka") version "1.7.10"
+    id("org.javamodularity.moduleplugin") version "1.8.12"
 }
 
 group = "org.rationalityfrontline.ktrader"
@@ -36,7 +36,7 @@ repositories {
 dependencies {
     val pf4j = "org.pf4j:pf4j:3.7.0"
     val ktrader_api = "org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires"
-    val kotlin_coroutines = "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.2"
+    val kotlin_coroutines = "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.4"
     val kevent = "org.rationalityfrontline:kevent:2.1.2"
     val jctp = "org.rationalityfrontline:jctp:6.6.1_P1-1.0.4"
     if (asPlugin) {  // 发布为 ZIP 插件
