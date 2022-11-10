@@ -179,7 +179,6 @@ internal fun MutableList<Order>.insert(order: Order) {
 /**
  * 交易所 ID
  */
-@Suppress("unused")
 object ExchangeID {
     const val SHFE = "SHFE"
     const val INE = "INE"
@@ -273,4 +272,64 @@ data class MarginRate(
             else -> Unit
         }
     }
+}
+
+private val SHFE_2300 = setOf("rb", "hc", "fu", "bu", "ru", "sp", "nr", "lu")
+private val SHFE_0100 = setOf("cu", "al", "zn", "pb", "ni", "sn", "ss", "bc")
+private val SHFE_0230 = setOf("au", "ag", "sc")
+
+/**
+ * 依据 Tick 时间及成交量判断当前 Tick 的市场交易状态
+ */
+fun getTickStatus(tick: Tick): MarketStatus {
+    val hour = tick.time.hour
+    // 所有 8 点或 20 点的 Tick 必然是集合竞价状态
+    if (hour == 8 || hour == 20) {
+        return if (tick.todayVolume == 0) MarketStatus.AUCTION_ORDERING else MarketStatus.AUCTION_MATCHED
+    }
+    val minute = tick.time.minute
+    // 所有中午 11:30 的 Tick 必然是暂停交易状态
+    if (hour == 11 && minute == 30) return MarketStatus.STOP_TRADING
+    // 其余情况分交易所处理，但都是排除特殊时间点后，默认为连续竞价交易
+    val exchangeID = parseCode(tick.code).first
+    when (exchangeID) {
+        ExchangeID.CZCE,
+        ExchangeID.DCE -> {
+            if (hour == 10 && minute == 15) return MarketStatus.STOP_TRADING
+            if (hour == 15) return MarketStatus.CLOSED
+            if (hour == 23) return MarketStatus.STOP_TRADING
+            return MarketStatus.CONTINUOUS_MATCHING
+        }
+        ExchangeID.SHFE,
+        ExchangeID.INE -> {
+            if (hour == 10 && minute == 15) return MarketStatus.STOP_TRADING
+            if (hour == 15) return MarketStatus.CLOSED
+            if (hour == 2 && minute >= 30) return MarketStatus.STOP_TRADING
+            fun getProductID(): String {
+                return tick.info?.productId?.substring(0, 2) ?: ""
+            }
+            val second = tick.time.second
+            if (hour == 23 && minute == 0 && second == 0) {
+                if (getProductID() in SHFE_2300) return MarketStatus.STOP_TRADING
+            }
+            if (hour == 1 && minute == 0 && second == 0) {
+                if (getProductID() in SHFE_0100) return MarketStatus.STOP_TRADING
+            }
+            return MarketStatus.CONTINUOUS_MATCHING
+        }
+        ExchangeID.CFFEX -> {
+            if (hour == 9 && minute < 30) {
+                return if (tick.todayVolume == 0) MarketStatus.AUCTION_ORDERING else MarketStatus.AUCTION_MATCHED
+            }
+            if (hour == 15) {
+                if (minute == 0) {
+                    return if (tick.info?.productId?.get(0) == 'T') MarketStatus.CONTINUOUS_MATCHING else MarketStatus.CLOSED
+                }
+                if (minute >= 15) return MarketStatus.CLOSED
+                return MarketStatus.CONTINUOUS_MATCHING
+            }
+            return MarketStatus.CONTINUOUS_MATCHING
+        }
+    }
+    return MarketStatus.UNKNOWN
 }

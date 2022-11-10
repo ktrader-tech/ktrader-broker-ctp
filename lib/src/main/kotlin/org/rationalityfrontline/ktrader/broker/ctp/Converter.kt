@@ -83,7 +83,6 @@ internal object Converter {
         tickField: CThostFtdcDepthMarketDataField,
         lastTick: Tick? = null,
         info: SecurityInfo? = null,
-        marketStatus: MarketStatus = MarketStatus.UNKNOWN,
         onTimeParseError: (Exception) -> Unit,
     ): Tick {
         val updateTime = try {
@@ -105,7 +104,7 @@ internal object Converter {
             code = code,
             tradingDay = tradingDay,
             time = updateTime,
-            status = marketStatus,
+            status = MarketStatus.UNKNOWN,
             price = lastPrice,
             prePrice = lastTick?.price ?: lastPrice,
             bidPrice = bidPrice,
@@ -126,6 +125,7 @@ internal object Converter {
             if (info?.type == SecurityType.OPTIONS) {
                 optionsDelta = tickField.currDelta
             }
+            status = getTickStatus(this)
         }
     }
 

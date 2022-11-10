@@ -385,7 +385,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
             val code = getCode(data.instrumentID)
             val lastTick = lastTicks[code]
             val info = tdApi.instruments[code]
-            val newTick = Converter.tickC2A(code, tdApi.tradingDate, data, lastTick, info, tdApi.getInstrumentStatus(code)) { e ->
+            val newTick = Converter.tickC2A(code, tdApi.tradingDate, data, lastTick, info) { e ->
                 api.postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
             }
             if (api.isTestingTickToTrade) {
