@@ -114,6 +114,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     private val commissionRateQueriedCodes: MutableSet<String> = mutableSetOf()
     /** 当前交易日已查询过日级价格信息（涨跌停价、昨收昨结昨仓）的证券代码 */
     private val dayPriceInfoQueriedCodes: MutableSet<String> = mutableSetOf()
+    /** 正在执行 [ensureFullSecurityInfo] 网络查询的证券代码 */
+    private val queryingFullSecurityInfoCodes: MutableSet<String> = mutableSetOf()
     /**
      * 品种代码表，key 为合约 code，value 为品种代码(productId)。用于从 code 快速映射到 [productStatusMap]
      */
@@ -497,6 +499,19 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
      */
     suspend fun ensureFullSecurityInfo(code: String, throwException: Boolean = true) {
         val info = instruments[code] ?: return
+        val doQuery = info.marginRateLong == 0.0 || info.openCommissionRate == 0.0 || (info.todayHighLimitPrice == 0.0 && code !in dayPriceInfoQueriedCodes)
+        if (doQuery) {
+            if (code in queryingFullSecurityInfoCodes) {
+                val requestId = nextRequestId()
+                suspendCoroutine<Unit> { continuation ->
+                    requestMap[requestId] = RequestContinuation(requestId, continuation, "ensureFullSecurityInfo-$code")
+                }
+                return
+            } else {
+                queryingFullSecurityInfoCodes.add(code)
+            }
+        } else return
+        // 执行实际查询操作
         fun handleException(e: Exception, msg: String) {
             if (throwException){
                 throw e
@@ -547,6 +562,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             }
             else -> Unit
         }
+        queryingFullSecurityInfoCodes.remove(code)
+        resumeRequests("ensureFullSecurityInfo-$code", Unit)
     }
 
     /** 确保如果是中金所，那么计算报单/撤单手续费（1.0元每笔） */
@@ -1678,6 +1695,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 marginRateQueriedCodes.clear()
                 commissionRateQueriedCodes.clear()
                 dayPriceInfoQueriedCodes.clear()
+                queryingFullSecurityInfoCodes.clear()
                 cachedTickMap.clear()
                 orderFrozenVolumeCountedSet.clear()
                 if (bIsLast) {
