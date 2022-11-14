@@ -6,6 +6,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import org.rationalityfrontline.jctp.CThostFtdcRspInfoField
 import org.rationalityfrontline.ktrader.api.datatype.*
+import java.time.DayOfWeek
+import java.time.LocalDateTime
 import kotlin.coroutines.Continuation
 
 /**
@@ -274,34 +276,65 @@ data class MarginRate(
     }
 }
 
-private val SHFE_2300 = setOf("rb", "hc", "fu", "bu", "ru", "sp", "nr", "lu")
-private val SHFE_0100 = setOf("cu", "al", "zn", "pb", "ni", "sn", "ss", "bc")
-private val SHFE_0230 = setOf("au", "ag", "sc")
+/*
+交易时间段：
+
+SHFE/INE:
+20:55	20:59	21:00	23:00	09:00	10:15	10:30	11:30	13:30	15:00	("rb", "hc", "fu", "bu", "ru", "sp", "nr", "lu")
+20:55	20:59	21:00	01:00	09:00	10:15	10:30	11:30	13:30	15:00	("cu", "al", "zn", "pb", "ni", "sn", "ss", "bc")
+20:55	20:59	21:00	02:30	09:00	10:15	10:30	11:30	13:30	15:00	("au", "ag", "sc")
+				08:55	08:59	09:00	10:15	10:30	11:30	13:30	15:00	("wr")
+
+CFFEX:
+09:25	09:29	09:30	11:30	13:00	15:00	("IO", "MO", "IC", "IF", "IH", "IM")
+09:25	09:29	09:30	11:30	13:00	15:15	("T", "TF", "TS")
+
+CZCE/DCE:
+注意 CZCE 开盘竞价时会推送多笔竞价报价 Tick（仅此一家会推送，其它只会推送竞价成交的单个 Tick）
+20:55	20:59	21:00	23:00	09:00	10:15	10:30	11:30	13:30	15:00
+				08:55	08:59	09:00	10:15	10:30	11:30	13:30	15:00
+ */
+
+/** 上期所/能源中心 23:00 暂停交易的品种 */
+private val SHFE_INE_2300 = setOf("rb", "hc", "fu", "bu", "ru", "sp", "nr", "lu")
+/** 上期所/能源中心 01:00 暂停交易的品种 */
+private val SHFE_INE_0100 = setOf("cu", "al", "zn", "pb", "ni", "sn", "ss", "bc")
+/** 上期所/能源中心 02:30 暂停交易的品种 */
+private val SHFE_INE_0230 = setOf("au", "ag", "sc")
+
+/** 上期所/能源中心 排除特殊时间点后的连续竞价交易小时 */
+private val SHFE_INE_TRADING_HOURS = setOf(21, 22, 23, 0, 1, 2, 9, 10, 11, 13, 14)
+/** 郑商所/大商所 排除特殊时间点后的连续竞价交易小时 */
+private val CZCE_DCE_TRADING_HOURS = setOf(21, 22, 9, 10, 11, 13, 14)
+/** 中金所 排除特殊时间点后的连续竞价交易小时 */
+private val CFFEX_TRADING_HOURS = setOf(9, 10, 11, 13, 14, 15)
+
 
 /**
- * 依据 Tick 时间及成交量判断当前 Tick 的市场交易状态
+ * 判断 Tick 的市场交易状态
  */
-fun getTickStatus(tick: Tick): MarketStatus {
+fun getTickStatus(tick: Tick, exchangeID: String): MarketStatus {
     val hour = tick.time.hour
-    // 所有 8 点或 20 点的 Tick 必然是集合竞价状态
-    if (hour == 8 || hour == 20) {
-        return if (tick.todayVolume == 0) MarketStatus.AUCTION_ORDERING else MarketStatus.AUCTION_MATCHED
-    }
     val minute = tick.time.minute
     // 所有中午 11:30 的 Tick 必然是暂停交易状态
     if (hour == 11 && minute == 30) return MarketStatus.STOP_TRADING
-    // 其余情况分交易所处理，但都是排除特殊时间点后，默认为连续竞价交易
-    val exchangeID = parseCode(tick.code).first
     when (exchangeID) {
         ExchangeID.CZCE,
         ExchangeID.DCE -> {
+            // 所有 8 点或 20 点的 Tick 必然是集合竞价状态，只需要判断是是否是竞价
+            if (hour == 20 || hour == 8) {
+                if (tick.todayVolume > 0 || minute == 59 || exchangeID == ExchangeID.DCE) return MarketStatus.AUCTION_MATCHED
+                return MarketStatus.AUCTION_ORDERING
+            }
+            if (hour == 23) return MarketStatus.STOP_TRADING
             if (hour == 10 && minute == 15) return MarketStatus.STOP_TRADING
             if (hour == 15) return MarketStatus.CLOSED
-            if (hour == 23) return MarketStatus.STOP_TRADING
-            return MarketStatus.CONTINUOUS_MATCHING
+            return if (hour in CZCE_DCE_TRADING_HOURS) MarketStatus.CONTINUOUS_MATCHING else MarketStatus.STOP_TRADING
         }
+
         ExchangeID.SHFE,
         ExchangeID.INE -> {
+            if (hour == 20 || hour == 8) return MarketStatus.AUCTION_MATCHED
             if (hour == 10 && minute == 15) return MarketStatus.STOP_TRADING
             if (hour == 15) return MarketStatus.CLOSED
             if (hour == 2 && minute >= 30) return MarketStatus.STOP_TRADING
@@ -310,26 +343,28 @@ fun getTickStatus(tick: Tick): MarketStatus {
             }
             val second = tick.time.second
             if (hour == 23 && minute == 0 && second == 0) {
-                if (getProductID() in SHFE_2300) return MarketStatus.STOP_TRADING
+                return if (getProductID() in SHFE_INE_2300) MarketStatus.STOP_TRADING else MarketStatus.CONTINUOUS_MATCHING
             }
             if (hour == 1 && minute == 0 && second == 0) {
-                if (getProductID() in SHFE_0100) return MarketStatus.STOP_TRADING
+                return if (getProductID() in SHFE_INE_0230) MarketStatus.CONTINUOUS_MATCHING else MarketStatus.STOP_TRADING
             }
-            return MarketStatus.CONTINUOUS_MATCHING
+            return if (hour in SHFE_INE_TRADING_HOURS) MarketStatus.CONTINUOUS_MATCHING else MarketStatus.STOP_TRADING
         }
         ExchangeID.CFFEX -> {
-            if (hour == 9 && minute < 30) {
-                return if (tick.todayVolume == 0) MarketStatus.AUCTION_ORDERING else MarketStatus.AUCTION_MATCHED
-            }
+            if (hour == 9 && minute < 30) return MarketStatus.AUCTION_MATCHED
             if (hour == 15) {
-                if (minute == 0) {
-                    return if (tick.info?.productId?.get(0) == 'T') MarketStatus.CONTINUOUS_MATCHING else MarketStatus.CLOSED
-                }
+                if (minute == 0) return if (tick.info?.productId?.get(0) == 'T') MarketStatus.CONTINUOUS_MATCHING else MarketStatus.CLOSED
                 if (minute >= 15) return MarketStatus.CLOSED
-                return MarketStatus.CONTINUOUS_MATCHING
             }
-            return MarketStatus.CONTINUOUS_MATCHING
+            return if (hour in CFFEX_TRADING_HOURS) MarketStatus.CONTINUOUS_MATCHING else MarketStatus.STOP_TRADING
         }
     }
     return MarketStatus.UNKNOWN
+}
+
+fun correctTickDate(tick: Tick) {
+    if (tick.time.isAfter(LocalDateTime.now())) {
+        val minusDays = if (tick.time.dayOfWeek == DayOfWeek.MONDAY) 3L else 1L
+        tick.time = tick.time.minusDays(minusDays)
+    }
 }

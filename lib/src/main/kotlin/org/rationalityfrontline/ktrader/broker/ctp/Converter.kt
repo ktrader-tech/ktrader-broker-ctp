@@ -6,6 +6,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.round
 
 /**
  * 翻译器，用于将本地的 CTP 信息翻译为标准的 BrokerApi 信息
@@ -83,6 +84,7 @@ internal object Converter {
         tickField: CThostFtdcDepthMarketDataField,
         lastTick: Tick? = null,
         info: SecurityInfo? = null,
+        exchangeID: String = code.substringBefore('.'),
         onTimeParseError: (Exception) -> Unit,
     ): Tick {
         val updateTime = try {
@@ -97,7 +99,7 @@ internal object Converter {
         val bidPrice = doubleArrayOf(formatDouble(tickField.bidPrice1), formatDouble(tickField.bidPrice2), formatDouble(tickField.bidPrice3), formatDouble(tickField.bidPrice4), formatDouble(tickField.bidPrice5))
         val askPrice = doubleArrayOf(formatDouble(tickField.askPrice1), formatDouble(tickField.askPrice2), formatDouble(tickField.askPrice3), formatDouble(tickField.askPrice4), formatDouble(tickField.askPrice5))
         val volumeMultiple = info?.volumeMultiple ?: 1
-        if (code.startsWith("CZCE")) {
+        if (exchangeID == ExchangeID.CZCE) {
             tickField.turnover *= volumeMultiple
         }
         return Tick(
@@ -125,16 +127,17 @@ internal object Converter {
             if (info?.type == SecurityType.OPTIONS) {
                 optionsDelta = tickField.currDelta
             }
-            status = getTickStatus(this)
+            status = getTickStatus(this, exchangeID)
         }
     }
 
     /**
-     * 行情推送的 [Tick] 中很多字段可能是无效值，CTP 内用 [Double.MAX_VALUE] 表示，在此需要统一为 0.0
+     * 行情推送的 [Tick] 中很多字段可能是无效值，CTP 内用 [Double.MAX_VALUE] 表示，在此需要统一为 0.0。
+     * 另外有时候数值会带上很小的非零小数位，如 12565.000000000002，需要去除这种小数位。
      */
     @Suppress("NOTHING_TO_INLINE")
     inline fun formatDouble(input: Double): Double {
-        return if (input == Double.MAX_VALUE) 0.0 else input
+        return if (input == Double.MAX_VALUE) 0.0 else round(input * 10000) / 10000
     }
 
     fun securityC2A(tradingDay: LocalDate, insField: CThostFtdcInstrumentField, onTimeParseError: (Exception) -> Unit): SecurityInfo? {

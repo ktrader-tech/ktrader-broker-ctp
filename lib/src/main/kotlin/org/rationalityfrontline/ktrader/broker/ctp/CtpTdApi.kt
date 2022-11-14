@@ -123,7 +123,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     /**
      * 品种状态表，key 为品种代码，value 为品种状态
      */
-    private val productStatusMap: MutableMap<String, MarketStatus> = mutableMapOf()
+    val productStatusMap: MutableMap<String, MarketStatus> = mutableMapOf()
     /**
      * 缓存的 tick 表，key 为合约 code
      */
@@ -798,7 +798,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 ensureFullSecurityInfo(code)
             }
         }
-        return resultTick
+        return resultTick?.apply {
+            resultTick.info?.productId?.let { productID -> productStatusMap[productID]?.let { status = it } }
+        }
     }
 
     /**
@@ -1333,20 +1335,41 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 else -> MarketStatus.UNKNOWN
             }
             productStatusMap[pInstrumentStatus.instrumentID] = marketStatus
-            if (connected) {
-                val ticks = mdApi.lastTicks.values.filter { codeProductMap[it.code] == pInstrumentStatus.instrumentID }
-                if (ticks.isNotEmpty()) {
-                    try {
-                        val enterTime = LocalTime.parse(pInstrumentStatus.enterTime).atDate(LocalDate.now())
-                        ticks.forEach {  tick ->
-                            if (enterTime.isAfter(tick.time)) {
-                                val newTick = tick.copy(status = marketStatus, time = enterTime, volume = 0, turnover = 0.0, openInterestDelta = 0)
+            if (connected) {  // 避免处理刚连接上时重放的当日历史状态
+                // 拷贝值，避免之后 pInstrumentStatus 的内部值在 C++ 中发生更改
+                val rawEnterTime = pInstrumentStatus.enterTime
+                val productID = pInstrumentStatus.instrumentID
+                api.scope.launch {
+                    val ticks = mdApi.lastTicks.values.filter { codeProductMap[it.code] == productID }
+                    if (ticks.isNotEmpty()) {
+                        try {
+                            val enterTime = LocalTime.parse(rawEnterTime).atDate(LocalDate.now())
+                            fun pushStatusTick(baseTick: Tick) {
+                                val newTick = baseTick.copy(status = marketStatus, time = enterTime, volume = 0, turnover = 0.0, openInterestDelta = 0).apply {
+                                    extras = (extras ?: mutableMapOf()).apply { put("isStatusTick", "true") }
+                                }
                                 mdApi.lastTicks[newTick.code] = newTick
                                 api.postBrokerEvent(BrokerEventType.TICK, newTick)
                             }
+                            ticks.forEach { tick ->
+                                // 仅当状态推送比 Tick 推送先到达时进行纯状态 Tick 补发检查
+                                if (tick.status != marketStatus && !tick.time.isAfter(enterTime)) {
+                                    if (marketStatus == MarketStatus.AUCTION_ORDERING || marketStatus == MarketStatus.CONTINUOUS_MATCHING) {  // 如果是开始信号，立即推送
+                                        pushStatusTick(tick)
+                                    } else {  // 如果不是开始信号， 等待一会儿后再检查以避免错过对应状态的 Tick
+                                        launch delayedCheck@{
+                                            delay(config.statusTickDelay)
+                                            val lastTick = mdApi.lastTicks[tick.code] ?: return@delayedCheck
+                                            if (lastTick.status != marketStatus && !lastTick.time.isAfter(enterTime)) {
+                                                pushStatusTick(lastTick)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnInstrumentStatus】解析 enterTime 失败：$e")
                         }
-                    } catch (e: Exception) {
-                        api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRtnInstrumentStatus】解析 enterTime 失败：$e")
                     }
                 }
             }
@@ -2211,9 +2234,10 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         info.todayLowLimitPrice = Converter.formatDouble(pDepthMarketData.lowerLimitPrice)
                         dayPriceInfoQueriedCodes.add(code)
                     }
-                    val tick = Converter.tickC2A(code, Converter.dateC2A(pDepthMarketData.tradingDay), pDepthMarketData, info = info) { e ->
+                    val tick = Converter.tickC2A(code, Converter.dateC2A(pDepthMarketData.tradingDay), pDepthMarketData, info = info, exchangeID = pDepthMarketData.exchangeID) { e ->
                         api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryDepthMarketData】Tick updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
                     }
+                    correctTickDate(tick)
                     cachedTickMap[code] = tick
                     (request.continuation as Continuation<Tick?>).resume(tick)
                     requestMap.remove(nRequestID)

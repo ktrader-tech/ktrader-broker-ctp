@@ -5,7 +5,8 @@ package org.rationalityfrontline.ktrader.broker.ctp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.rationalityfrontline.jctp.*
-import org.rationalityfrontline.ktrader.api.broker.*
+import org.rationalityfrontline.ktrader.api.broker.BrokerEventType
+import org.rationalityfrontline.ktrader.api.broker.LogLevel
 import org.rationalityfrontline.ktrader.api.datatype.SecurityInfo
 import org.rationalityfrontline.ktrader.api.datatype.SecurityType
 import org.rationalityfrontline.ktrader.api.datatype.Tick
@@ -395,8 +396,15 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                 newTick.optionsUnderlyingPrice = lastTicks[info.optionsUnderlyingCode]?.price ?: 0.0
             }
             lastTicks[code] = newTick
-            // 过滤掉订阅时自动推送的第一笔数据
-            if (lastTick != null && api.tdConnected) api.postBrokerEvent(BrokerEventType.TICK, newTick)
+            if (lastTick == null) {
+                // 第一笔 Tick 的日期可能不是当前日期，需要进行判断
+                correctTickDate(newTick)
+                // 第一笔 Tick 的基于时间的状态计算可能是错误的（譬如白天开盘前订阅时收到昨天夜盘 22:59:58 的 Tick），需要以状态回调为准
+                info?.productId?.let { productID -> tdApi.productStatusMap[productID]?.let { newTick.status = it } }
+            } else {
+                // 订阅时自动推送的第一笔数据不会推送
+                if (api.tdConnected) api.postBrokerEvent(BrokerEventType.TICK, newTick)
+            }
         }
     }
 }
