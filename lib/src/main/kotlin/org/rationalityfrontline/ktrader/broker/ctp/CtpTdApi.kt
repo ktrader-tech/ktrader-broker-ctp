@@ -1353,7 +1353,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                             if (enterTime.second != 0) enterTime = enterTime.truncatedTo(ChronoUnit.MINUTES).plusMinutes(1)  // 郑商所返回的时间不是交易所时间，譬如可能为 08:54:59，
                             fun pushStatusTick(baseTick: Tick) {
                                 val newTick = baseTick.copy(status = marketStatus, time = enterTime, volume = 0, turnover = 0.0, openInterestDelta = 0).apply {
-                                    extras = (extras ?: mutableMapOf()).apply { put("isStatusTick", "true") }
+                                    extras = (extras ?: mutableMapOf()).apply { put("isStatusTick", "true"); getOrPut("originalTime") { baseTick.time.toString() } }
                                 }
                                 mdApi.lastTicks[newTick.code] = newTick
                                 api.postBrokerEvent(BrokerEventType.TICK, newTick)
