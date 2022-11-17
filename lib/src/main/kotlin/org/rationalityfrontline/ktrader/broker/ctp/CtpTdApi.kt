@@ -13,6 +13,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.Continuation
@@ -766,8 +767,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
 
     /**
      * 查询最新 [Tick]。如果对应的 [instruments] 无当日价格信息（涨跌停价、昨收昨结昨仓），则自动将当日价格信息写入其中（见 [CtpTdSpi.OnRspQryDepthMarketData]）
-     * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
-     * 如果之前没查过，会很耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
+     * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时。
      */
     suspend fun queryLastTick(code: String, useCache: Boolean, extras: Map<String, String>? = null): Tick? {
         var resultTick: Tick? = null
@@ -869,12 +869,12 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
 
     /**
      * 查询全市场合约的信息。
-     * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
+     * [extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
      * 如果之前没查过，会很耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
      */
     suspend fun queryAllSecurities(useCache: Boolean = true, extras: Map<String, String>? = null): List<SecurityInfo> {
         if (useCache && instruments.isNotEmpty()) {
-            if (extras?.get("ensureFullInfo") != "false") {
+            if (extras?.get("ensureFullInfo") == "true") {
                 instruments.keys.forEach {
                     ensureFullSecurityInfo(it)
                 }
@@ -892,7 +892,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
 
     /**
      * 按 [SecurityInfo.productId] 查询证券信息。
-     * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
+     * [extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
      * 如果之前没查过，会耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
      * @param productId 证券品种
      */
@@ -903,7 +903,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
     ): List<SecurityInfo> {
         if (useCache && instruments.isNotEmpty()) {
             val results = instruments.values.filter { it.productId == productId }
-            if (extras?.get("ensureFullInfo") != "false") {
+            if (extras?.get("ensureFullInfo") == "true") {
                 results.forEach {
                     ensureFullSecurityInfo(it.code)
                 }
@@ -915,7 +915,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
 
     /**
      * 按标的物代码查询期权信息。
-     * [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
+     * [extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
      * 如果之前没查过，会耗时。当 useCache 为 false 时无效，且返回的 [SecurityInfo] 信息不完整】
      * @param underlyingCode 期权标的物的代码
      * @param type 期权的类型，默认为 [OptionsType.UNKNOWN]，表示返回所有类型的期权
@@ -935,7 +935,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         }
         val results = if (useCache && instruments.isNotEmpty()) {
             val results = instruments.values.filter(predicate)
-            if (extras?.get("ensureFullInfo") != "false") {
+            if (extras?.get("ensureFullInfo") == "true") {
                 results.forEach {
                     ensureFullSecurityInfo(it.code)
                 }
@@ -1328,8 +1328,14 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             val marketStatus = when (pInstrumentStatus.instrumentStatus) {
                 THOST_FTDC_IS_AuctionOrdering -> MarketStatus.AUCTION_ORDERING
                 THOST_FTDC_IS_AuctionMatch -> MarketStatus.AUCTION_MATCHED
-                THOST_FTDC_IS_NoTrading,
-                THOST_FTDC_IS_BeforeTrading -> MarketStatus.STOP_TRADING
+                THOST_FTDC_IS_NoTrading -> MarketStatus.STOP_TRADING
+                THOST_FTDC_IS_BeforeTrading -> {
+                    if (productStatusMap[pInstrumentStatus.instrumentID] == MarketStatus.AUCTION_ORDERING) {
+                        MarketStatus.AUCTION_MATCHED
+                    } else {
+                        MarketStatus.STOP_TRADING
+                    }
+                }
                 THOST_FTDC_IS_Continous -> MarketStatus.CONTINUOUS_MATCHING
                 THOST_FTDC_IS_Closed -> MarketStatus.CLOSED
                 else -> MarketStatus.UNKNOWN
@@ -1343,7 +1349,8 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     val ticks = mdApi.lastTicks.values.filter { codeProductMap[it.code] == productID }
                     if (ticks.isNotEmpty()) {
                         try {
-                            val enterTime = LocalTime.parse(rawEnterTime).atDate(LocalDate.now())
+                            var enterTime = LocalTime.parse(rawEnterTime).atDate(LocalDate.now())
+                            if (enterTime.second != 0) enterTime = enterTime.truncatedTo(ChronoUnit.MINUTES).plusMinutes(1)  // 郑商所返回的时间不是交易所时间，譬如可能为 08:54:59，
                             fun pushStatusTick(baseTick: Tick) {
                                 val newTick = baseTick.copy(status = marketStatus, time = enterTime, volume = 0, turnover = 0.0, openInterestDelta = 0).apply {
                                     extras = (extras ?: mutableMapOf()).apply { put("isStatusTick", "true") }

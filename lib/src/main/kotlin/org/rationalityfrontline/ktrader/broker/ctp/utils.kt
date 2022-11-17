@@ -331,7 +331,6 @@ fun getTickStatus(tick: Tick, exchangeID: String): MarketStatus {
             if (hour == 15) return MarketStatus.CLOSED
             return if (hour in CZCE_DCE_TRADING_HOURS) MarketStatus.CONTINUOUS_MATCHING else MarketStatus.STOP_TRADING
         }
-
         ExchangeID.SHFE,
         ExchangeID.INE -> {
             if (hour == 20 || hour == 8) return MarketStatus.AUCTION_MATCHED

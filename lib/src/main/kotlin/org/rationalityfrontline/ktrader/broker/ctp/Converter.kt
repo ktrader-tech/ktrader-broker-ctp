@@ -6,6 +6,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import kotlin.math.round
 
 /**
@@ -128,6 +129,13 @@ internal object Converter {
                 optionsDelta = tickField.currDelta
             }
             status = getTickStatus(this, exchangeID)
+            if (status == MarketStatus.STOP_TRADING || status == MarketStatus.CLOSED) {
+                val originalTime = time
+                time = originalTime.truncatedTo(ChronoUnit.MINUTES)  // 避免导致 K 线合成器合成并推送超出暂停交易时间的 Bar（譬如这会在收到 22:59:59.500, 23:00:00.500 时发生 - 先强制推送然后收盘推送强制推送时生成的新 Bar）
+                if (!time.isEqual(originalTime)) {
+                    extras = (extras ?: mutableMapOf()).apply { put("originalTime", originalTime.toString()) }
+                }
+            }
         }
     }
 

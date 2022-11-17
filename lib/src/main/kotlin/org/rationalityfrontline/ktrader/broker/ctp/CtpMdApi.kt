@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.ktrader.api.broker.BrokerEventType
 import org.rationalityfrontline.ktrader.api.broker.LogLevel
+import org.rationalityfrontline.ktrader.api.datatype.MarketStatus
 import org.rationalityfrontline.ktrader.api.datatype.SecurityInfo
 import org.rationalityfrontline.ktrader.api.datatype.SecurityType
 import org.rationalityfrontline.ktrader.api.datatype.Tick
@@ -388,6 +389,9 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
             val info = tdApi.instruments[code]
             val newTick = Converter.tickC2A(code, tdApi.tradingDate, data, lastTick, info) { e ->
                 api.postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
+            }
+            if (lastTick?.status == MarketStatus.CLOSED && newTick.status != MarketStatus.CLOSED) {  // 收盘后郑商所可能会延时推送时间为 14:59:59 的 Tick
+                newTick.status = MarketStatus.CLOSED
             }
             if (api.isTestingTickToTrade) {
                 newTick.tttTime = receiveTime!!
