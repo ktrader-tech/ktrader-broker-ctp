@@ -401,15 +401,15 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                 // 第一笔 Tick 的基于时间的状态计算可能是错误的（譬如白天开盘前订阅时收到昨天夜盘 22:59:58 的 Tick），需要以状态回调为准
                 info?.productId?.let { productID -> tdApi.productStatusMap[productID]?.let { newTick.status = it } }
             } else {
-                if (newTick.time.isBefore(lastTick.time)) {  // 暂停/停止交易时，常发生最后几个 Tick 延时推送的现象，而此时纯状态 Tick 可能已推送，因而造成 Tick 时间非递增，此时需要修改延时 Tick 的时间和状态
+                // 暂停/停止交易时，常发生最后几个 Tick 延时推送的现象，而此时纯状态 Tick 可能已推送，因而造成 Tick 时间非递增，此时需要修改延时 Tick 的时间和状态
+                // 另外大商所的盘中 Tick 时常发生时间乱序，这种情况不予处理，因此用状态是否变更来排除这一情况
+                if (newTick.time.isBefore(lastTick.time) && newTick.status != lastTick.status) {
                     newTick.extras = (newTick.extras ?: mutableMapOf()).apply {
                         put("originalTime", newTick.time.toString())
-                        if (newTick.status != lastTick.status) {
-                            put("originalStatus", newTick.status.name)
-                            newTick.status = lastTick.status
-                        }
+                        put("originalStatus", newTick.status.name)
                     }
                     newTick.time = lastTick.time
+                    newTick.status = lastTick.status
                 }
                 // 订阅时自动推送的第一笔数据不会推送
                 if (api.tdConnected) api.postBrokerEvent(BrokerEventType.TICK, newTick)
