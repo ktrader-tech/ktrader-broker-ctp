@@ -89,7 +89,7 @@ internal object Converter {
         onTimeParseError: (Exception) -> Unit,
     ): Tick {
         var updateTime = try {
-            LocalTime.parse("${tickField.updateTime}.${tickField.updateMillisec}").atDate(LocalDate.now())
+            LocalTime.parse("${tickField.updateTime}.${tickField.updateMillisec.toString().padStart(3, '0')}").atDate(LocalDate.now())
         } catch (e: Exception) {
             if ("${tickField.updateTime}.${tickField.updateMillisec}" != ".0") {  // 当 CtpTdApi 在夜市时段查询股指期权时出现的特殊情况
                 onTimeParseError(e)
