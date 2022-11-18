@@ -390,9 +390,6 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
             val newTick = Converter.tickC2A(code, tdApi.tradingDate, data, lastTick, info) { e ->
                 api.postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRtnDepthMarketData】Tick updateTime 解析失败：$code, ${data.updateTime}.${data.updateMillisec}, $e")
             }
-            if (lastTick?.status == MarketStatus.CLOSED && newTick.status != MarketStatus.CLOSED) {  // 收盘后郑商所可能会延时推送时间为 14:59:59 的 Tick
-                newTick.status = MarketStatus.CLOSED
-            }
             if (api.isTestingTickToTrade) {
                 newTick.tttTime = receiveTime!!
             }
@@ -404,6 +401,16 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                 // 第一笔 Tick 的基于时间的状态计算可能是错误的（譬如白天开盘前订阅时收到昨天夜盘 22:59:58 的 Tick），需要以状态回调为准
                 info?.productId?.let { productID -> tdApi.productStatusMap[productID]?.let { newTick.status = it } }
             } else {
+                if (newTick.time.isBefore(lastTick.time)) {  // 暂停/停止交易时，常发生最后几个 Tick 延时推送的现象，而此时纯状态 Tick 可能已推送，因而造成 Tick 时间非递增，此时需要修改延时 Tick 的时间和状态
+                    newTick.extras = (newTick.extras ?: mutableMapOf()).apply {
+                        put("originalTime", newTick.time.toString())
+                        if (newTick.status != lastTick.status) {
+                            put("originalStatus", newTick.status.name)
+                            newTick.status = lastTick.status
+                        }
+                    }
+                    newTick.time = lastTick.time
+                }
                 // 订阅时自动推送的第一笔数据不会推送
                 if (api.tdConnected) api.postBrokerEvent(BrokerEventType.TICK, newTick)
             }

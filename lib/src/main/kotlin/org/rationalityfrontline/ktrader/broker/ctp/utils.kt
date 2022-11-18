@@ -309,49 +309,98 @@ private val CFFEX_TRADING_HOURS = setOf(9, 10, 11, 13, 14, 15)
 
 
 /**
- * 判断 Tick 的市场交易状态
+ * 判断 Tick 的市场交易状态，并对 AUCTION_MATCHED/STOP_TRADING/CLOSED 状态的 Tick 进行时间修正
  */
 fun getTickStatus(tick: Tick, exchangeID: String): MarketStatus {
+    fun reviseTickTime(hour: Int, minute: Int) {  // 对所有状态为 AUCTION_MATCHED/STOP_TRADING/CLOSED 的 Tick 进行时间修正
+        val revisedTime = tick.time.toLocalDate().atTime(hour, minute)
+        if (!revisedTime.isEqual(tick.time)) {
+            tick.extras = (tick.extras ?: mutableMapOf()).apply { getOrPut("originalTime") { tick.time.toString() } }
+            tick.time = revisedTime
+        }
+    }
     val hour = tick.time.hour
     val minute = tick.time.minute
     // 所有中午 11:30 的 Tick 必然是暂停交易状态
-    if (hour == 11 && minute == 30) return MarketStatus.STOP_TRADING
+    if (hour == 11 && minute == 30) {
+        reviseTickTime(11, 30)
+        return MarketStatus.STOP_TRADING
+    }
     when (exchangeID) {
         ExchangeID.CZCE,
         ExchangeID.DCE -> {
             // 所有 8 点或 20 点的 Tick 必然是集合竞价状态，只需要判断是是否是竞价
             if (hour == 20 || hour == 8) {
-                if (tick.todayVolume > 0 || minute == 59 || exchangeID == ExchangeID.DCE) return MarketStatus.AUCTION_MATCHED
+                if (tick.todayVolume > 0 || minute == 59 || exchangeID == ExchangeID.DCE) {
+                    reviseTickTime(hour, 59)
+                    return MarketStatus.AUCTION_MATCHED
+                }
                 return MarketStatus.AUCTION_ORDERING
             }
-            if (hour == 23) return MarketStatus.STOP_TRADING
-            if (hour == 10 && minute == 15) return MarketStatus.STOP_TRADING
-            if (hour == 15) return MarketStatus.CLOSED
+            if (hour == 23) {
+                reviseTickTime(23, 0)
+                return MarketStatus.STOP_TRADING
+            }
+            if (hour == 10 && minute == 15) {
+                reviseTickTime(10, 15)
+                return MarketStatus.STOP_TRADING
+            }
+            if (hour == 15) {
+                reviseTickTime(15, 0)
+                return MarketStatus.CLOSED
+            }
             return if (hour in CZCE_DCE_TRADING_HOURS) MarketStatus.CONTINUOUS_MATCHING else MarketStatus.STOP_TRADING
         }
         ExchangeID.SHFE,
         ExchangeID.INE -> {
-            if (hour == 20 || hour == 8) return MarketStatus.AUCTION_MATCHED
-            if (hour == 10 && minute == 15) return MarketStatus.STOP_TRADING
-            if (hour == 15) return MarketStatus.CLOSED
-            if (hour == 2 && minute >= 30) return MarketStatus.STOP_TRADING
+            if (hour == 20 || hour == 8) {
+                reviseTickTime(hour, 59)
+                return MarketStatus.AUCTION_MATCHED
+            }
+            if (hour == 10 && minute == 15) {
+                reviseTickTime(15, 0)
+                return MarketStatus.STOP_TRADING
+            }
+            if (hour == 15) {
+                reviseTickTime(15, 0)
+                return MarketStatus.CLOSED
+            }
+            if (hour == 2 && minute >= 30) {
+                reviseTickTime(2, 30)
+                return MarketStatus.STOP_TRADING
+            }
             fun getProductID(): String {
                 return tick.info?.productId?.substring(0, 2) ?: ""
             }
             val second = tick.time.second
             if (hour == 23 && minute == 0 && second == 0) {
-                return if (getProductID() in SHFE_INE_2300) MarketStatus.STOP_TRADING else MarketStatus.CONTINUOUS_MATCHING
+                return if (getProductID() in SHFE_INE_2300) {
+                    reviseTickTime(23, 0)
+                    MarketStatus.STOP_TRADING
+                } else MarketStatus.CONTINUOUS_MATCHING
             }
             if (hour == 1 && minute == 0 && second == 0) {
-                return if (getProductID() in SHFE_INE_0230) MarketStatus.CONTINUOUS_MATCHING else MarketStatus.STOP_TRADING
+                return if (getProductID() in SHFE_INE_0230) MarketStatus.CONTINUOUS_MATCHING else {
+                    reviseTickTime(1, 0)
+                    MarketStatus.STOP_TRADING
+                }
             }
             return if (hour in SHFE_INE_TRADING_HOURS) MarketStatus.CONTINUOUS_MATCHING else MarketStatus.STOP_TRADING
         }
         ExchangeID.CFFEX -> {
-            if (hour == 9 && minute < 30) return MarketStatus.AUCTION_MATCHED
+            if (hour == 9 && minute < 30) {
+                reviseTickTime(9, 29)
+                return MarketStatus.AUCTION_MATCHED
+            }
             if (hour == 15) {
-                if (minute == 0) return if (tick.info?.productId?.get(0) == 'T') MarketStatus.CONTINUOUS_MATCHING else MarketStatus.CLOSED
-                if (minute >= 15) return MarketStatus.CLOSED
+                if (minute == 0) return if (tick.info?.productId?.get(0) == 'T') MarketStatus.CONTINUOUS_MATCHING else {
+                    reviseTickTime(15, 0)
+                    MarketStatus.CLOSED
+                }
+                if (minute >= 15) {
+                    reviseTickTime(15, 15)
+                    return MarketStatus.CLOSED
+                }
             }
             return if (hour in CFFEX_TRADING_HOURS) MarketStatus.CONTINUOUS_MATCHING else MarketStatus.STOP_TRADING
         }

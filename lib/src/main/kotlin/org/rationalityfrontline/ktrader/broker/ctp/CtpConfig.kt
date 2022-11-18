@@ -13,7 +13,7 @@ package org.rationalityfrontline.ktrader.broker.ctp
  * @param userProductInfo 交易终端软件的产品信息
  * @param cachePath 存贮订阅信息文件等临时文件的目录
  * @param timeout 接口调用超时时间（单位：毫秒），默认为 10000
- * @param statusTickDelay 补发纯状态 Tick 的延迟时间（单位：毫秒）。默认为 900
+ * @param statusTickDelay 补发纯状态 Tick 的延迟时间（单位：毫秒）。默认为 3000
  */
 data class CtpConfig(
     val mdFronts: List<String>,
@@ -25,8 +25,8 @@ data class CtpConfig(
     val authCode: String,
     val userProductInfo: String,
     val cachePath: String,
-    val timeout: Long = 10000,
-    val statusTickDelay: Long = 900,
+    val timeout: Long = 10000L,
+    val statusTickDelay: Long = 3000L,
 ) {
     companion object {
         /**
@@ -53,8 +53,8 @@ data class CtpConfig(
                 authCode = config["AuthCode"] ?: "",
                 userProductInfo = config["UserProductInfo"] ?: "",
                 cachePath = config["CachePath"] ?: "",
-                timeout = config["Timeout"]?.toLongOrNull() ?: 10000,
-                statusTickDelay = config["StatusTickDelay"]?.toLongOrNull() ?: 900
+                timeout = config["Timeout"]?.toLongOrNull() ?: 10000L,
+                statusTickDelay = config["StatusTickDelay"]?.toLongOrNull() ?: 3000L
             )
         }
     }
