@@ -6,8 +6,6 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import org.rationalityfrontline.jctp.CThostFtdcRspInfoField
 import org.rationalityfrontline.ktrader.api.datatype.*
-import java.time.DayOfWeek
-import java.time.LocalDateTime
 import kotlin.coroutines.Continuation
 
 /**
@@ -359,11 +357,4 @@ fun getTickStatus(tick: Tick, exchangeID: String): MarketStatus {
         }
     }
     return MarketStatus.UNKNOWN
-}
-
-fun correctTickDate(tick: Tick) {
-    if (tick.time.isAfter(LocalDateTime.now())) {
-        val minusDays = if (tick.time.dayOfWeek == DayOfWeek.MONDAY) 3L else 1L
-        tick.time = tick.time.minusDays(minusDays)
-    }
 }

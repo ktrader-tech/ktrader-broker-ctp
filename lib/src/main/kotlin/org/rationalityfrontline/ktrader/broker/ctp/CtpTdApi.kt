@@ -2244,7 +2244,6 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     val tick = Converter.tickC2A(code, Converter.dateC2A(pDepthMarketData.tradingDay), pDepthMarketData, info = info, exchangeID = pDepthMarketData.exchangeID) { e ->
                         api.postBrokerLogEvent(LogLevel.ERROR, "【CtpTdSpi.OnRspQryDepthMarketData】Tick updateTime 解析失败：${request.data}, ${pDepthMarketData.updateTime}.${pDepthMarketData.updateMillisec}, $e")
                     }
-                    correctTickDate(tick)
                     cachedTickMap[code] = tick
                     (request.continuation as Continuation<Tick?>).resume(tick)
                     requestMap.remove(nRequestID)

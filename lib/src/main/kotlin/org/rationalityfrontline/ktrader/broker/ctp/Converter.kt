@@ -2,6 +2,7 @@ package org.rationalityfrontline.ktrader.broker.ctp
 
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.ktrader.api.datatype.*
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -88,13 +89,19 @@ internal object Converter {
         exchangeID: String = code.substringBefore('.'),
         onTimeParseError: (Exception) -> Unit,
     ): Tick {
-        val updateTime = try {
+        var updateTime = try {
             LocalTime.parse("${tickField.updateTime}.${tickField.updateMillisec}").atDate(LocalDate.now())
         } catch (e: Exception) {
             if ("${tickField.updateTime}.${tickField.updateMillisec}" != ".0") {  // 当 CtpTdApi 在夜市时段查询股指期权时出现的特殊情况
                 onTimeParseError(e)
             }
             LocalDateTime.now()
+        }
+        if (lastTick == null) {  // 非实时推送的 Tick 的日期可能不是当前日期，需要进行判断
+            if (updateTime.isAfter(LocalDateTime.now())) {
+                val minusDays = if (updateTime.dayOfWeek == DayOfWeek.MONDAY) 3L else 1L
+                updateTime = updateTime.minusDays(minusDays)
+            }
         }
         val lastPrice = formatDouble(tickField.lastPrice)
         val bidPrice = doubleArrayOf(formatDouble(tickField.bidPrice1), formatDouble(tickField.bidPrice2), formatDouble(tickField.bidPrice3), formatDouble(tickField.bidPrice4), formatDouble(tickField.bidPrice5))
