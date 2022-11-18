@@ -51,7 +51,7 @@ object CtpBrokerInfo: ApiInfo {
         Pair("AuthCode", "String 交易终端软件的授权码"),
         Pair("UserProductInfo", "String 交易终端软件的产品信息。默认为空"),
         Pair("Timeout", "Long 接口调用超时时间（单位：毫秒）。默认为 10000"),
-        Pair("StatusTickDelay", "Long 补发纯状态 Tick 的延迟时间（单位：毫秒）。默认为 3000")
+        Pair("StatusTickDelay", "Long 补发纯状态 Tick 的延迟时间（单位：毫秒）。默认为 2800")
     ).run {
         if (!BuildInfo.IS_PLUGIN) {
             add(Pair("CachePath", "String 存贮订阅信息文件等临时文件的目录。默认为 ./data/ctp/"))
