@@ -24,6 +24,7 @@ fun main() {
         userProductInfo = "",  // 产品信息
         cachePath = "./data/ctp",  // 本地缓存文件存储目录
         timeout = 6000,  // 接口调用超时时间（单位：毫秒）
+        statusTickDelay = 2800,  // 补发暂停交易（AUCTION_MATCHED/STOP_TRADING/CLOSED）的纯状态 Tick 的延迟时间（单位：毫秒）
     )
     // 创建 CtpBrokerApi 实例
     val api = CtpBrokerApi(File("./data/ctp"), KotlinLogging.logger { }, config)

@@ -30,12 +30,20 @@ object CtpBrokerInfo: ApiInfo {
         * 实现了本地持仓、订单、成交、Tick 的缓存及维护，让查询请求本地快速返回，避免频繁网络请求
         * 自动查询账户真实的手续费率（包括中金所申报手续费）与保证金率，并计算持仓、订单、成交相关的手续费、保证金、冻结资金（期权也支持）
         * 封装提供了一些 CTP 原生不支持的功能，如查询当前已订阅行情，Tick 中带有合约交易状态及 Tick 内成交量成交额等
+        * 对 CTP 推送的 Tick 进行了修改，实现了标准化的 Tick 推送流程
         * 网络断开重连时会自动订阅原先已订阅的行情，不用手动重新订阅
         * 支持 7x24 小时全自动运行
         
+        关于对 CTP Tick 的修改，具体如下：
+        * 任何 AUCTION_MATCHED/STOP_TRADING/CLOSED 状态的 Tick.time 一定是标准时间（如 08:59/11:30/15:00）
+        * 任何合约单日内的 Tick 状态推送一定会经过 AUCTION_ORDERING -> AUCTION_MATCHED -> [CONTINUOUS_MATCHING -> STOP_TRADING] -> CLOSED 这一标准流程
+        * 为了保证上面这一标准流程，当合约交易状态变更时，如果未收到对应状态的 Tick 推送，将补发推送纯状态 Tick，即将上一 Tick 抹除交易量数据并修改状态为新状态的 Tick。对于 AUCTION_ORDERING/CONTINUOUS_MATCHING 的状态更改，会立即检查补发。而对于 AUCTION_MATCHED/STOP_TRADING/CLOSED 的状态更改，会等待 StatusTickDelay 毫秒后再检查补发
+        * 所有修改过时间的 Tick 都会在 Tick.extras 中用 "originalTime" 字段附上修改前的原 Tick 时间
+        * 所有修改过状态的 Tick 都会在 Tick.extras 中用 "isStatusTick" 字段表明该 Tick 为补发的纯状态 Tick
+        
         支持的额外参数：
-        querySecurity/queryLastTick：[extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时】
-        querySecurities/queryAllSecurities/queryOptions：[extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时。当 useCache 为 false 时无效，且返回的 SecurityInfo 信息不完整】
+        subscribeTick/subscribeTicks/querySecurity/queryLastTick：[extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时】
+        subscribeAllTicks/querySecurities/queryAllSecurities/queryOptions：[extras.ensureFullInfo: Boolean = false]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），如果之前没查过，会耗时。当 useCache 为 false 时无效，且返回的 SecurityInfo 信息不完整】
     """.trimIndent()
 
     /**
@@ -51,7 +59,7 @@ object CtpBrokerInfo: ApiInfo {
         Pair("AuthCode", "String 交易终端软件的授权码"),
         Pair("UserProductInfo", "String 交易终端软件的产品信息。默认为空"),
         Pair("Timeout", "Long 接口调用超时时间（单位：毫秒）。默认为 10000"),
-        Pair("StatusTickDelay", "Long 补发纯状态 Tick 的延迟时间（单位：毫秒）。默认为 2800")
+        Pair("StatusTickDelay", "Long 补发暂停交易（AUCTION_MATCHED/STOP_TRADING/CLOSED）的纯状态 Tick 的延迟时间（单位：毫秒）。默认为 2800")
     ).run {
         if (!BuildInfo.IS_PLUGIN) {
             add(Pair("CachePath", "String 存贮订阅信息文件等临时文件的目录。默认为 ./data/ctp/"))

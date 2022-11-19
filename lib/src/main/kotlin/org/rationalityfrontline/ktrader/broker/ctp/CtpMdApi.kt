@@ -151,10 +151,12 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
     fun querySubscriptions(useCache: Boolean, extras: Map<String, String>?): List<String> = subscriptions.toList()
 
     /**
-     * 订阅行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复订阅
+     * 订阅行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复订阅。
+     *  [extras.ensureFullInfo: Boolean = true]【是否确保信息完整（保证金费率、手续费率、当日价格信息（涨跌停价、昨收昨结昨仓）），
      */
     suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, String>? = null): List<SecurityInfo> {
         if (codes.isEmpty()) return emptyList()
+        val ensureFullInfo = extras?.get("ensureFullInfo") != "false"
         val filteredCodes = codes.filter { it !in subscriptions && !it.contains(' ') }
         if (filteredCodes.isEmpty()) return emptyList()
         // CTP 行情订阅目前（2021.07）每34个订阅会丢失一个订阅（OnRspSubMarketData 中会每34个回调返回一个 bIsLast 为 true），所以需要分割
@@ -182,7 +184,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
             })
             return filteredCodes.mapNotNull {
                 tdApi.instruments[it]?.apply {
-                    tdApi.ensureFullSecurityInfo(it)
+                    if (ensureFullInfo) tdApi.ensureFullSecurityInfo(it)
                     // 如果是期权，自动订阅期权标的物的行情，以更新 Tick.optionsUnderlyingPrice 字段
                     if (type == SecurityType.OPTIONS && optionsUnderlyingCode.isNotEmpty()) {
                         subscribeMarketData(listOf(optionsUnderlyingCode))
@@ -193,11 +195,11 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
     }
 
     /**
-     * 退订行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复退订。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
+     * 退订行情。合约代码格式为 ExchangeID.InstrumentID。会自动检查合约订阅状态防止重复退订
      */
     suspend fun unsubscribeMarketData(codes: Collection<String>, extras: Map<String, String>? = null) {
         if (codes.isEmpty()) return
-        val filteredCodes = if (extras?.get("isForce") != "true") codes.filter { it in subscriptions } else codes
+        val filteredCodes = codes.filter { it in subscriptions }
         if (filteredCodes.isEmpty()) return
         val rawCodes = filteredCodes.map { parseCode(it).second }.toTypedArray()
         val requestId = nextRequestId()
@@ -209,16 +211,17 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
     }
 
     /**
-     * 订阅全市场合约行情。会自动检查合约订阅状态防止重复订阅。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
+     * 订阅全市场合约行情。会自动检查合约订阅状态防止重复订阅
      */
     suspend fun subscribeAllMarketData(extras: Map<String, String>? = null): List<SecurityInfo> {
         val codes = tdApi.instruments.keys
         if (codes.isEmpty()) throw IllegalStateException("交易前置未连接，无法获得全市场合约")
-        return subscribeMarketData(codes, extras)
+        val modifiedExtras = (extras?.toMutableMap() ?: mutableMapOf()).apply { getOrPut("ensureFullInfo") { "false" } }
+        return subscribeMarketData(codes, modifiedExtras)
     }
 
     /**
-     * 退订所有已订阅的合约行情。会自动检查合约订阅状态防止重复退订。[extras.isForce: Boolean = false]【是否强制向交易所发送未更改的订阅请求（默认只发送未/已被订阅的标的的订阅请求）】
+     * 退订所有已订阅的合约行情。会自动检查合约订阅状态防止重复退订
      */
     suspend fun unsubscribeAllMarketData(extras: Map<String, String>? = null) {
         unsubscribeMarketData(subscriptions.toList(), extras)

@@ -28,6 +28,7 @@ private fun testCtpApi(brokerExtension: BrokerExtension) {
         "UserProductInfo" to "",  //用户产品信息
         "CachePath" to "./data/ctp",  // 本地缓存文件存储目录
         "Timeout" to "6000",  // 接口调用超时时间（单位：毫秒）
+        "statusTickDelay" = "2800",  // 补发暂停交易（AUCTION_MATCHED/STOP_TRADING/CLOSED）的纯状态 Tick 的延迟时间（单位：毫秒）
     )
     // 创建 CtpBrokerApi 实例
     val api = brokerExtension.createApi(File("./data/ctp"), KotlinLogging.logger { }, "0.3.0", config["InvestorID"]!!, config)

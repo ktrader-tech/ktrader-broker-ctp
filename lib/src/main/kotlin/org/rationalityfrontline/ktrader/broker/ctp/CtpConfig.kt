@@ -11,9 +11,9 @@ package org.rationalityfrontline.ktrader.broker.ctp
  * @param appId 交易终端软件的标识码
  * @param authCode 交易终端软件的授权码
  * @param userProductInfo 交易终端软件的产品信息
- * @param cachePath 存贮订阅信息文件等临时文件的目录
- * @param timeout 接口调用超时时间（单位：毫秒），默认为 10000
- * @param statusTickDelay 补发纯状态 Tick 的延迟时间（单位：毫秒）。默认为 2800
+ * @param cachePath 存贮订阅信息文件等临时文件的目录。默认为 ./data/ctp/
+ * @param timeout 接口调用超时时间（单位：毫秒）。默认为 10000
+ * @param statusTickDelay 补发暂停交易（AUCTION_MATCHED/STOP_TRADING/CLOSED）的纯状态 Tick 的延迟时间（单位：毫秒）。默认为 2800
  */
 data class CtpConfig(
     val mdFronts: List<String>,
