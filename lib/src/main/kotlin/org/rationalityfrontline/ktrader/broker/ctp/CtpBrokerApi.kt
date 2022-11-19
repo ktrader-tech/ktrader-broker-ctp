@@ -1,9 +1,6 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.*
 import mu.KLogger
 import org.rationalityfrontline.kevent.EventDispatchMode
 import org.rationalityfrontline.kevent.KEvent
@@ -49,6 +46,11 @@ class CtpBrokerApi(
     var tdConnected: Boolean = false
         set(value) {
             if (field == value) return
+            if (mdConnected && mdApi.isLastSubscribeEnsureFullInfo && mdApi.subscriptions.size in 1..1000) {  // 避免仅 CtpTdApi 断线重连的情况下之前订阅的 Tick.info 丢失完整信息
+                runBlocking {
+                    mdApi.subscriptions.forEach { tdApi.ensureFullSecurityInfo(it, false) }
+                }
+            }
             field = value
             brokerStatus = if (value && mdConnected) BrokerStatus.CONNECTED else {
                 if (brokerStatus != BrokerStatus.CLOSING) BrokerStatus.CONNECTING else BrokerStatus.CLOSING

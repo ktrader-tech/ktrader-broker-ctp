@@ -57,6 +57,8 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
      * 当前交易日内已订阅的合约代码集合（当交易日发生更替时会自动失效清零）
      */
     val subscriptions: MutableSet<String> = mutableSetOf()
+    /** 上一次订阅是否要求确保完整证券信息，用于在仅 [CtpTdApi] 断线重连的情况下重新恢复之前订阅合约的完整信息 */
+    var isLastSubscribeEnsureFullInfo = true
     /** 当前交易日断连前的订阅列表（当交易日发生更替时会自动失效清零） */
     private val preSubscriptions: MutableSet<String> = mutableSetOf()
     /**
@@ -157,6 +159,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
     suspend fun subscribeMarketData(codes: Collection<String>, extras: Map<String, String>? = null): List<SecurityInfo> {
         if (codes.isEmpty()) return emptyList()
         val ensureFullInfo = extras?.get("ensureFullInfo") != "false"
+        isLastSubscribeEnsureFullInfo = ensureFullInfo
         val filteredCodes = codes.filter { it !in subscriptions && !it.contains(' ') }
         if (filteredCodes.isEmpty()) return emptyList()
         // CTP 行情订阅目前（2021.07）每34个订阅会丢失一个订阅（OnRspSubMarketData 中会每34个回调返回一个 bIsLast 为 true），所以需要分割
@@ -165,7 +168,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
             var startIndex = 0
             val resultList = mutableListOf<SecurityInfo>()
             while (startIndex < filteredCodes.size) {
-                resultList.addAll(subscribeMarketData(fullCodes.subList(startIndex, min(startIndex + 33, filteredCodes.size))))
+                resultList.addAll(subscribeMarketData(fullCodes.subList(startIndex, min(startIndex + 33, filteredCodes.size)), extras))
                 startIndex += 33
             }
             return resultList
@@ -187,7 +190,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                     if (ensureFullInfo) tdApi.ensureFullSecurityInfo(it)
                     // 如果是期权，自动订阅期权标的物的行情，以更新 Tick.optionsUnderlyingPrice 字段
                     if (type == SecurityType.OPTIONS && optionsUnderlyingCode.isNotEmpty()) {
-                        subscribeMarketData(listOf(optionsUnderlyingCode))
+                        subscribeMarketData(listOf(optionsUnderlyingCode), extras)
                     }
                 }
             }
@@ -305,7 +308,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                     if (preSubscriptions.isNotEmpty()) {
                         api.scope.launch {
                             runWithRetry({
-                                subscribeMarketData(preSubscriptions.toList())
+                                subscribeMarketData(preSubscriptions.toList(), mapOf("ensureFullInfo" to isLastSubscribeEnsureFullInfo.toString()))
                                 api.postBrokerLogEvent(LogLevel.INFO, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情成功")
                             }, { e ->
                                 api.postBrokerLogEvent(LogLevel.ERROR, "【CtpMdSpi.OnRspUserLogin】重连后自动订阅行情失败：$e")
@@ -413,7 +416,6 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                     newTick.time = lastTick.time
                     newTick.status = lastTick.status
                 }
-                // 订阅时自动推送的第一笔数据不会推送
                 if (api.tdConnected) api.postBrokerEvent(BrokerEventType.TICK, newTick)
             }
         }
