@@ -358,7 +358,7 @@ fun getTickStatus(tick: Tick, exchangeID: String): MarketStatus {
                 return MarketStatus.AUCTION_MATCHED
             }
             if (hour == 10 && minute == 15) {
-                reviseTickTime(15, 0)
+                reviseTickTime(10, 15)
                 return MarketStatus.STOP_TRADING
             }
             if (hour == 15) {
