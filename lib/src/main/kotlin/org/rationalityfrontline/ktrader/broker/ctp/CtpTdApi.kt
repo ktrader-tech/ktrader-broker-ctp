@@ -1909,18 +1909,26 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 }
             }
             // 更新仓位冻结信息
-            val position = queryCachedPosition(order.code, order.direction, true)
-            if (order.orderId !in orderFrozenVolumeCountedSet) {
-                orderFrozenVolumeCountedSet.add(order.orderId)
-                if (position != null) {
-                    position.frozenVolume += order.volume
-                }
-            }
-            if (newOrderStatus == OrderStatus.ERROR || newOrderStatus == OrderStatus.CANCELED) {
-                if (oldStatus != OrderStatus.ERROR && oldStatus != OrderStatus.CANCELED) {
-                    val restVolume = order.volume - pOrder.volumeTraded
+            if (order.offset != OrderOffset.OPEN) {
+                val position = queryCachedPosition(order.code, order.direction, true)
+                if (order.orderId !in orderFrozenVolumeCountedSet) {
+                    orderFrozenVolumeCountedSet.add(order.orderId)
                     if (position != null) {
-                        position.frozenVolume -= restVolume
+                        position.frozenVolume += order.volume
+                        if (order.offset == OrderOffset.CLOSE_TODAY) {
+                            position.frozenTodayVolume += order.volume
+                        }
+                    }
+                }
+                if (newOrderStatus == OrderStatus.ERROR || newOrderStatus == OrderStatus.CANCELED) {
+                    if (oldStatus != OrderStatus.ERROR && oldStatus != OrderStatus.CANCELED) {
+                        val restVolume = order.volume - pOrder.volumeTraded
+                        if (position != null) {
+                            position.frozenVolume -= restVolume
+                            if (order.offset == OrderOffset.CLOSE_TODAY) {
+                                position.frozenTodayVolume -= restVolume
+                            }
+                        }
                     }
                 }
             }
@@ -1988,7 +1996,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     if (biPosition.long == null) {
                         biPosition.long = Position(
                             config.investorId, tradingDate,
-                            trade.code, Direction.LONG, 0, 0, 0, 0,
+                            trade.code, Direction.LONG, 0, 0, 0, 0, 0,
                             0, 0, 0.0, 0.0
                         ).apply {
                             info.copyFieldsToPosition(this)
@@ -2001,7 +2009,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     if (biPosition.short == null) {
                         biPosition.short = Position(
                             config.investorId, tradingDate,
-                            trade.code, Direction.SHORT, 0, 0, 0, 0,
+                            trade.code, Direction.SHORT, 0, 0, 0, 0, 0,
                             0, 0, 0.0, 0.0
                         ).apply {
                             info.copyFieldsToPosition(this)
@@ -2083,6 +2091,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     position.todayVolume -= todayClosed
                     position.todayCloseVolume += totalClosed
                     position.frozenVolume -= totalClosed
+                    position.frozenTodayVolume -= todayClosed
                     // 由于未知持仓明细，因此此处只按开仓均价减去对应开仓成本，保持开仓均价不变，为此查询持仓明细太麻烦了
                     position.openCost -= position.avgOpenPrice() * totalClosed * info.volumeMultiple
                     // 部分平今部分平昨，则本地计算手续费
@@ -2361,6 +2370,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         mergePosition.apply {
                             volume += pInvestorPosition.position
                             this.frozenVolume += frozenVolume
+                            if (pInvestorPosition.positionDate != '2') {
+                                this.frozenTodayVolume += frozenVolume
+                            }
                             todayCloseVolume += pInvestorPosition.closeVolume
                             todayCommission += pInvestorPosition.commission
                             openCost += pInvestorPosition.openCost

@@ -295,6 +295,7 @@ internal object Converter {
             volume = positionField.position,
             todayVolume = positionField.todayPosition,
             frozenVolume = frozenVolume,
+            frozenTodayVolume = 0,
             todayOpenVolume = positionField.openVolume,
             todayCloseVolume = positionField.closeVolume,
             todayCommission = positionField.commission,
