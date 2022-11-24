@@ -2370,7 +2370,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                         mergePosition.apply {
                             volume += pInvestorPosition.position
                             this.frozenVolume += frozenVolume
-                            if (pInvestorPosition.positionDate != '2') {
+                            if (pInvestorPosition.positionDate != THOST_FTDC_PSD_History) {
                                 this.frozenTodayVolume += frozenVolume
                             }
                             todayCloseVolume += pInvestorPosition.closeVolume
@@ -2694,6 +2694,47 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 request.continuation.resumeWithException(Exception("$errorMsg ($errorCode)"))
                 requestMap.remove(nRequestID)
             }
+        }
+
+        /**
+         * 处理银期转账回报
+         *
+         * @param pRspTransfer 转账回报
+         * @param isIn 是否是转入到期货账户
+         */
+        private fun handleTransferCashEvent(pRspTransfer: CThostFtdcRspTransferField, isIn: Boolean) {
+            if (pRspTransfer.transferStatus == THOST_FTDC_TRFS_Normal) {
+                val sign = if (isIn) 1 else -1
+                api.postBrokerEvent(BrokerEventType.CUSTOM_EVENT, CustomEvent("TRANSFER_CASH", (sign * Converter.formatDouble(pRspTransfer.tradeAmount)).toString()))
+            }
+        }
+
+        /**
+         * 银行发起银行资金转期货通知
+         */
+        override fun OnRtnFromBankToFutureByBank(pRspTransfer: CThostFtdcRspTransferField) {
+            handleTransferCashEvent(pRspTransfer, true)
+        }
+
+        /**
+         * 期货发起银行资金转期货通知
+         */
+        override fun OnRtnFromBankToFutureByFuture(pRspTransfer: CThostFtdcRspTransferField) {
+            handleTransferCashEvent(pRspTransfer, true)
+        }
+
+        /**
+         * 银行发起期货资金转银行通知
+         */
+        override fun OnRtnFromFutureToBankByBank(pRspTransfer: CThostFtdcRspTransferField) {
+            handleTransferCashEvent(pRspTransfer, false)
+        }
+
+        /**
+         * 期货发起期货资金转银行通知
+         */
+        override fun OnRtnFromFutureToBankByFuture(pRspTransfer: CThostFtdcRspTransferField) {
+            handleTransferCashEvent(pRspTransfer, false)
         }
     }
 }
