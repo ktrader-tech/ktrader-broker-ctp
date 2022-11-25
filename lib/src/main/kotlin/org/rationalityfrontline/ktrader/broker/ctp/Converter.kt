@@ -2,6 +2,7 @@ package org.rationalityfrontline.ktrader.broker.ctp
 
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.ktrader.api.datatype.*
+import org.rationalityfrontline.ktrader.utils.broker.copyFieldsToPosition
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime

@@ -4,6 +4,7 @@ module ktrader.broker.ctp {
     requires transitive kotlinx.coroutines.core.jvm;
     requires transitive kevent;
     requires transitive ktrader.api;
+    requires ktrader.utils;
     requires jctp;
     requires static org.pf4j;
 
