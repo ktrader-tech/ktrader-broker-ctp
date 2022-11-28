@@ -224,9 +224,9 @@ data class CommissionRate(
      * 将手续费率处理后赋值给 [info] 的对应字段
      */
     fun copyFieldsToSecurityInfo(info: SecurityInfo) {
-        info.openCommissionRate = if (openRatioByVolume > 0.01) openRatioByVolume else openRatioByMoney
-        info.closeCommissionRate = if (closeRatioByVolume > 0.01) closeRatioByVolume else closeRatioByMoney
-        info.closeTodayCommissionRate = if (closeTodayRatioByVolume > 0.01) closeTodayRatioByVolume else closeTodayRatioByMoney
+        info.openCommissionRate = if (openRatioByVolume > 0.1) openRatioByVolume else openRatioByMoney
+        info.closeCommissionRate = if (closeRatioByVolume > 0.1) closeRatioByVolume else closeRatioByMoney
+        info.closeTodayCommissionRate = if (closeTodayRatioByVolume > 0.1) closeTodayRatioByVolume else closeTodayRatioByMoney
     }
 }
 
