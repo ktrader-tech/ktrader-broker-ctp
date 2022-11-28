@@ -7,9 +7,6 @@ plugins {
     kotlin("jvm") version "1.7.21"
     kotlin("kapt") version "1.7.21"
     `java-library`
-    `maven-publish`
-    signing
-    id("org.jetbrains.dokka") version "1.7.20"
     id("org.javamodularity.moduleplugin") version "1.8.12"
 }
 
@@ -18,7 +15,6 @@ version = "1.3.3"
 val NAME = "ktrader-broker-ctp"
 val DESC = "KTrader-API 中 Broker 接口的 CTP 实现"
 val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
-val asPlugin = true  // 是否作为插件编译
 val asTest = false  // 是否编译为仿真评测版本
 
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
@@ -35,29 +31,12 @@ repositories {
 }
 
 dependencies {
-    val pf4j = "org.pf4j:pf4j:3.8.0"
-    val ktrader_api = "org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires"
-    val ktrader_utils = "org.rationalityfrontline.ktrader:ktrader-utils:0.1.0"
-    val kotlin_coroutines = "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.4"
-    val kevent = "org.rationalityfrontline:kevent:2.2.0"
+    kapt("org.pf4j:pf4j:3.8.0")
+    compileOnly(kotlin("stdlib"))
+    compileOnly("org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires")
+    compileOnly("org.rationalityfrontline.ktrader:ktrader-utils:0.1.0")
     val jctp = if (asTest) "org.rationalityfrontline:jctp:6.6.1_P1_CP-1.0.4" else "org.rationalityfrontline:jctp:6.6.1_P1-1.0.4"
-    if (asPlugin) {  // 发布为 ZIP 插件
-        compileOnly(kotlin("stdlib"))
-        compileOnly(ktrader_api)
-        compileOnly(ktrader_utils)
-        compileOnly(kotlin_coroutines)
-        compileOnly(kevent)
-        compileOnly(pf4j)
-        kapt(pf4j)
-        implementation(jctp) { exclude(group = "org.slf4j", module = "slf4j-api") }
-    } else {  // 发布到 Maven 仓库
-        api(ktrader_api)
-        api(kevent)
-        api(kotlin_coroutines)
-        compileOnly(pf4j)
-        implementation(jctp)
-        implementation(ktrader_utils)
-    }
+    implementation(jctp) { exclude(group = "org.slf4j", module = "slf4j-api") }
 }
 
 sourceSets.main {
@@ -82,28 +61,10 @@ tasks {
                 |    const val VERSION = "$version"
                 |    const val BUILD_DATE = "${LocalDateTime.now()}"
                 |    const val VENDOR = "RationalityFrontline"
-                |    const val IS_PLUGIN = $asPlugin
                 |}
                 """.trimMargin()
             )
         }
-    }
-    dokkaHtml {
-        outputDirectory.set(buildDir.resolve("javadoc"))
-        moduleName.set("KTrader-Broker-CTP")
-        dokkaSourceSets {
-            named("main") {
-                includes.from("module.md")
-            }
-        }
-    }
-    register<Jar>("javadocJar") {
-        archiveClassifier.set("javadoc")
-        from(dokkaHtml)
-    }
-    register<Jar>("sourcesJar") {
-        archiveClassifier.set("sources")
-        from(sourceSets["main"].allSource)
     }
     register<Zip>("pluginZip") {
         group = "distribution"
@@ -129,60 +90,4 @@ tasks {
             "Plugin-License" to pluginLicense
         ))
     }
-}
-
-publishing {
-    publications {
-        create<MavenPublication>("maven") {
-            from(components["java"])
-            artifact(tasks["sourcesJar"])
-            artifact(tasks["javadocJar"])
-            pom {
-                name.set(NAME)
-                description.set(DESC)
-                artifactId = NAME
-                packaging = "jar"
-                url.set("https://github.com/$GITHUB_REPO")
-                licenses {
-                    license {
-                        name.set("The Apache Software License, Version 2.0")
-                        url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
-                    }
-                }
-                developers {
-                    developer {
-                        name.set("RationalityFrontline")
-                        email.set("rationalityfrontline@gmail.com")
-                        organization.set("ktrader-tech")
-                        organizationUrl.set("https://github.com/ktrader-tech")
-                    }
-                }
-                scm {
-                    connection.set("scm:git:git://github.com/$GITHUB_REPO.git")
-                    developerConnection.set("scm:git:ssh://github.com:$GITHUB_REPO.git")
-                    url.set("https://github.com/$GITHUB_REPO/tree/master")
-                }
-            }
-        }
-    }
-    repositories {
-        fun env(propertyName: String): String {
-            return if (project.hasProperty(propertyName)) {
-                project.property(propertyName) as String
-            } else "Unknown"
-        }
-        maven {
-            val releasesRepoUrl = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
-            val snapshotsRepoUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
-            url = if (version.toString().endsWith("SNAPSHOT")) snapshotsRepoUrl else releasesRepoUrl
-            credentials {
-                username = env("ossrhUsername")
-                password = env("ossrhPassword")
-            }
-        }
-    }
-}
-
-signing {
-    sign(publishing.publications["maven"])
 }

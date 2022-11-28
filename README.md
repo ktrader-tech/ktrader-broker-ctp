@@ -4,14 +4,13 @@
 ![platform](https://img.shields.io/badge/platform-windows%7Clinux-green)
 [![Apache License 2.0](https://img.shields.io/github/license/ktrader-tech/ktrader-broker-ctp)](https://github.com/ktrader-tech/ktrader-broker-ctp/blob/master/LICENSE)
 
-[KTrader-API](https://github.com/ktrader-tech/ktrader-api) 中 BrokerApi 标准交易接口的 CTP 实现。可以作为类库使用，也可以作为插件使用。
+[KTrader-API](https://github.com/ktrader-tech/ktrader-api) 中 BrokerApi 接口的 CTP 实现。
 
 对底层 CTP 的调用使用了 CTP 的 Java 封装 [JCTP](https://github.com/ktrader-tech/jctp) ，支持 64 位的 Windows 及 Linux 操作系统。
 默认使用的 JCTP 版本为 `6.6.1_P1-1.0.4`，如果需要更换为其它版本，请参考 [Download](#download) 部分。
-> 虽然该项目是为 [KTrader 量化交易系统](https://github.com/ktrader-tech/ktrader) 而开发的，但也可以脱离 KTrader 独立使用
 
 ## 功能特性
-众所周知，CTP 使用繁琐（如登录流程）且存在很多的坑（如批量订阅行情每34个订阅会丢失一个订阅），但本框架封装后暴露给终端用户的接口是简洁且统一的
+众所周知，CTP 使用繁琐（如登录流程）且存在很多的坑，但本框架封装后暴露给终端用户的接口是简洁且统一的
 * 利用 [Kotlin 协程](https://github.com/Kotlin/kotlinx.coroutines) 将 CTP 的异步接口封装为同步调用方式，降低心智负担，提升开发效率
 * 内置自成交风控，存在自成交风险的下单请求会本地拒单
 * 内置撤单数量风控，单合约日内撤单数达到 499 次后会本地拒绝该合约的后续撤单请求
@@ -33,39 +32,36 @@
 
 
 ## 快速入门
-这里以类库的使用方式为例，首先参考 [Download](#download) 部分添加类库依赖，然后就可以使用本框架了：
 ```kotlin
-fun main() {
-    println("------------ 启动 ------------")
+private fun testCtpApi(brokerExtension: BrokerExtension) {
+    println("Broker 信息开始 ----------------------------------")
+    println(brokerExtension)
+    println("Broker 信息结束 ----------------------------------")
     // 创建 CTP 配置参数
-    val config = CtpConfig(
-        mdFronts = listOf("tcp://0.0.0.0:0"),  // 行情前置地址
-        tdFronts = listOf("tcp://0.0.0.0:0"),  // 交易前置地址
-        investorId = "123456",  // 资金账号
-        password = "123456",  // 资金账号密码
-        brokerId = "1234",  // BROKER ID
-        appId = "rf_ktrader_1.0.0",  // APPID
-        authCode = "ASDFGHJKL",  // 授权码
-        userProductInfo = "",  // 产品信息
-        cachePath = "./data/ctp",  // 本地缓存文件存储目录
-        timeout = 6000,  // 接口调用超时时间（单位：毫秒）
-        statusTickDelay = 2800,  // 补发暂停交易（AUCTION_MATCHED/STOP_TRADING/CLOSED）的纯状态 Tick 的延迟时间（单位：毫秒）
+    val config = mutableMapOf(
+        "MdFronts" to listOf("tcp://0.0.0.0:0").toString(),  // 行情前置地址
+        "TdFronts" to listOf("tcp://0.0.0.0:0").toString(),  // 交易前置地址
+        "InvestorID" to "123456",  // 资金账号
+        "Password" to "123456",  // 资金账号密码
+        "BrokerID" to "1234",  // BROKER ID
+        "AppID" to "rf_ktrader_1.0.0",  // APPID
+        "AuthCode" to "ASDFGHJKL",  // 授权码
+        "UserProductInfo" to "",  //用户产品信息
+        "CachePath" to "./data/ctp",  // 本地缓存文件存储目录
+        "Timeout" to "6000",  // 接口调用超时时间（单位：毫秒）
+        "statusTickDelay" to "2800",  // 补发暂停交易（AUCTION_MATCHED/STOP_TRADING/CLOSED）的纯状态 Tick 的延迟时间（单位：毫秒）
     )
     // 创建 CtpBrokerApi 实例
-    val api = CtpBrokerApi(config)
-    println(api.version)
+    val api = brokerExtension.createApi(File("./data/ctp"), KotlinLogging.logger { }, "0.4.0", config["InvestorID"]!!, config)
     // 订阅所有事件
-    api.kEvent.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList()) { event -> runBlocking {
+    api.kEvent.subscribeMultiple<BrokerEvent>(BrokerEventType.values().asList(), tag = api.sourceId) { event -> runBlocking {
         // 处理事件推送
         val brokerEvent = event.data
         when (brokerEvent.type) {
             // Tick 推送
             BrokerEventType.TICK -> {
                 val tick = brokerEvent.data as Tick
-                // 当某合约触及涨停价时，以跌停价挂1手多单开仓限价委托单
-                if (tick.price == tick.info!!.todayHighLimitPrice) {
-                    api.insertOrder(tick.code, tick.info!!.todayLowLimitPrice, 1, Direction.LONG, OrderOffset.OPEN)
-                }
+                println("Tick 推送：${tick.code}, ${tick.price}, ${tick.time}")
             }
             // 其它事件（网络连接、订单回报、成交回报等）
             else -> {
@@ -80,23 +76,45 @@ fun main() {
         println("当前交易日：${api.getTradingDay()}")
         println("查询账户资金：")
         println(api.queryAssets())
-        println("查询账户持仓：")
-        println(api.queryPositions().joinToString("\n"))
-        println("查询当日全部订单：")
-        println(api.queryOrders(onlyUnfinished = false).joinToString("\n"))
-        println("查询当日全部成交记录：")
-        println(api.queryTrades().joinToString("\n"))
         api.close()
         println("CTP 已关闭")
     }
+}
+
+fun main() {
+    println("------------ 启动 ------------")
+    val deleteOnFinish = false  // 是否运行完后删除插件
+    val pluginManager = object : DefaultPluginManager(Path.of("./plugins/")) {
+        override fun createExtensionFactory(): ExtensionFactory {
+            return SingletonExtensionFactory(this)
+        }
+    }
+    pluginManager.addPluginStateListener { event ->
+        println("插件状态变更：${event.plugin.pluginId} (${event.plugin.pluginPath}), ${event.oldState} -> ${event.pluginState}")
+    }
+    println("加载插件...")
+    pluginManager.loadPlugins()
+    println("启用插件...")
+    pluginManager.startPlugins()
+    println("调用插件...")
+    pluginManager.getExtensions(BrokerExtension::class.java).forEach { brokerExtension ->
+        if (brokerExtension.name == "CTP") testCtpApi(brokerExtension)
+    }
+    if (deleteOnFinish) {
+        println("删除插件...")
+        pluginManager.plugins.map { it.pluginId }.forEach {
+            pluginManager.deletePlugin(it)
+        }
+    } else {
+        println("停用插件...")
+        pluginManager.stopPlugins()
+    }
+    println("卸载插件...")
+    pluginManager.unloadPlugins()
     println("------------ 退出 ------------")
 }
 ```
-
-## 示例项目
-本项目在 examples 目录下提供了一些示例项目帮助使用者快速入门及创建新项目：
-* library-basic：展示以类库方式使用本框架的示例项目
-* plugin-basic：展示以插件方式使用本框架的示例项目
+完整的可运行程序实例在 examples 目录中。
 
 ## 使用说明
 初始化参数：
@@ -127,32 +145,6 @@ fun main() {
 | 郑商所  | CZCE  | 大写      | CZCE.MA109   |
 
 ## Download
-
-**Gradle:**
-
-```kotlin
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    implementation("org.rationalityfrontline.ktrader:ktrader-broker-ctp:1.3.2")
-    // 如果需要使用其它版本的 JCTP，取消注释下面一行，并填入自己需要的版本号
-//    implementation("org.rationalityfrontline:jctp") { version { strictly("6.6.1_P1_CP-1.0.4") } }
-}
-```
-
-**Maven:**
-
-```xml
-<dependency>
-    <groupId>org.rationalityfrontline.ktrader</groupId>
-    <artifactId>ktrader-broker-ctp</artifactId>
-    <version>1.3.2</version>
-</dependency>
-```
-
-**插件下载：**
 
 [Releases](https://github.com/ktrader-tech/ktrader-broker-ctp/releases)
 

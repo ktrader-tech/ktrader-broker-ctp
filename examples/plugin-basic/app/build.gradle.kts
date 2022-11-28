@@ -1,7 +1,7 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "1.7.10"
+    kotlin("jvm") version "1.7.21"
     application
 }
 
@@ -11,10 +11,8 @@ repositories {
 }
 
 dependencies {
-    implementation("org.pf4j:pf4j:3.7.0")
-    implementation("org.rationalityfrontline.ktrader:ktrader-api:0.3.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.2")
-    implementation("org.rationalityfrontline:kevent:2.1.2")
+    implementation("org.rationalityfrontline.ktrader:ktrader-api:0.4.0")
+    implementation("org.rationalityfrontline.ktrader:ktrader-utils:0.1.0")
 }
 
 application {
