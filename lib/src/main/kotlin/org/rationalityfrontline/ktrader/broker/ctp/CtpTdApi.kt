@@ -485,6 +485,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 throw Exception("本地拒撤：达到撤单次数上限（已撤 ${cancelStatistics[order.code]} 次）")
             }
         }
+        if (extras != null) {  // 合并 extras
+            order.extras = (order.extras ?: mutableMapOf()).apply { putAll(extras) }
+        }
         runWithResultCheck({ tdApi.ReqOrderAction(cancelReqField, nextRequestId()) }, {})
     }
 
