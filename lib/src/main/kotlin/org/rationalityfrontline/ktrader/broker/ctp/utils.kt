@@ -185,6 +185,7 @@ object ExchangeID {
     const val CFFEX = "CFFEX"
     const val DCE = "DCE"
     const val CZCE = "CZCE"
+    const val GFEX = "GFEX"
 }
 
 /**
@@ -291,6 +292,9 @@ CZCE/DCE:
 注意 CZCE 开盘竞价时会推送多笔竞价报价 Tick（仅此一家会推送，其它只会推送竞价成交的单个 Tick）
 20:55	20:59	21:00	23:00	09:00	10:15	10:30	11:30	13:30	15:00
 				08:55	08:59	09:00	10:15	10:30	11:30	13:30	15:00
+
+GFEX:
+				08:55	08:59	09:00	10:15	10:30	11:30	13:30	15:00
  */
 
 /** 上期所/能源中心 23:00 暂停交易的品种 */
@@ -328,7 +332,8 @@ fun getTickStatus(tick: Tick, exchangeID: String): MarketStatus {
     }
     when (exchangeID) {
         ExchangeID.CZCE,
-        ExchangeID.DCE -> {
+        ExchangeID.DCE,
+        ExchangeID.GFEX -> {
             // 所有 8 点或 20 点的 Tick 必然是集合竞价状态，只需要判断是是否是竞价
             if (hour == 20 || hour == 8) {
                 if (tick.todayVolume > 0 || minute == 59 || exchangeID == ExchangeID.DCE) {
