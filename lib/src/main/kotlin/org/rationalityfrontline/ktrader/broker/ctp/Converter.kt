@@ -237,7 +237,7 @@ internal object Converter {
         val code = "${orderField.exchangeID}.${orderField.instrumentID}"
         return Order(
             orderField.investorID, orderId, tradingDay, code, info?.name ?: code,
-            orderField.limitPrice, 0.0,  orderField.volumeTotalOriginal, orderField.minVolume, directionC2A(orderField.direction),
+            formatDouble(orderField.limitPrice), 0.0,  orderField.volumeTotalOriginal, orderField.minVolume, directionC2A(orderField.direction),
             offsetC2A(orderField.combOffsetFlag), orderType, orderStatus, orderField.statusMsg,
             orderField.volumeTraded, 0.0, 0.0, 0.0, 0.0,
             createTime, updateTime, extras = mutableMapOf()
@@ -268,7 +268,7 @@ internal object Converter {
             tradingDay = tradingDay,
             code = "${tradeField.exchangeID}.${tradeField.instrumentID}",
             name = name,
-            price = tradeField.price,
+            price = formatDouble(tradeField.price),
             closePositionPrice = closePositionPrice,
             volume = tradeField.volume,
             turnover = 0.0,

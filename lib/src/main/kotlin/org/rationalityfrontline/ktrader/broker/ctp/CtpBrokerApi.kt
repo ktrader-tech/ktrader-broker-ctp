@@ -66,7 +66,7 @@ class CtpBrokerApi(
     /**
      * 协程 scope
      */
-    val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override var isTestingTickToTrade: Boolean = false
         private set(value) {
