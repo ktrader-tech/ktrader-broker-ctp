@@ -600,11 +600,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             currencyID = "CNY"
         }
         val requestId = nextRequestId()
-        return runWithResultCheck({ tdApi.ReqQryBrokerTradingParams(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation)
-            }
-        })
+        return suspendWithRequest(requestId, requestMap, config.timeout) {
+            tdApi.ReqQryBrokerTradingParams(qryField, requestId)
+        }
     }
 
     /**
@@ -619,11 +617,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 hedgeFlag = THOST_FTDC_HF_Speculation
             }
             val requestId = nextRequestId()
-            runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentMarginRate(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation)
-                }
-            })
+            suspendWithRequest<Unit>(requestId, requestMap, config.timeout) {
+                tdApi.ReqQryInstrumentMarginRate(qryField, requestId)
+            }
         } else {
             val info = instruments[code]
             if (info != null && info.type == SecurityType.FUTURES && code !in marginRateQueriedCodes) {
@@ -634,11 +630,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     instrumentID = parseCode(code).second
                 }
                 val requestId = nextRequestId()
-                runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentMarginRate(qryField, requestId) }, {
-                    suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                        requestMap[requestId] = RequestContinuation(requestId, continuation)
-                    }
-                })
+                suspendWithRequest<Unit>(requestId, requestMap, config.timeout) {
+                    tdApi.ReqQryInstrumentMarginRate(qryField, requestId)
+                }
             }
         }
     }
@@ -655,11 +649,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 hedgeFlag = THOST_FTDC_HF_Speculation
             }
             val requestId = nextRequestId()
-            runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrTradeCost(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation)
-                }
-            })
+            suspendWithRequest<Unit>(requestId, requestMap, config.timeout) {
+                tdApi.ReqQryOptionInstrTradeCost(qryField, requestId)
+            }
         } else {
             val info = instruments[code]
             if (info != null && info.type == SecurityType.OPTIONS && code !in marginRateQueriedCodes) {
@@ -670,11 +662,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     instrumentID = parseCode(code).second
                 }
                 val requestId = nextRequestId()
-                runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrTradeCost(qryField, requestId) }, {
-                    suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                        requestMap[requestId] = RequestContinuation(requestId, continuation)
-                    }
-                })
+                suspendWithRequest<Unit>(requestId, requestMap, config.timeout) {
+                    tdApi.ReqQryOptionInstrTradeCost(qryField, requestId)
+                }
             }
         }
     }
@@ -690,11 +680,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 investorID = config.investorId
             }
             val requestId = nextRequestId()
-            runWithResultCheck<List<Job>>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, tag = "", data = mutableListOf<Job>())
-                }
-            }).forEach { it.join() }
+            suspendWithRequest<List<Job>>(requestId, requestMap, config.timeout, { continuation ->
+                RequestContinuation(requestId, continuation, tag = "", data = mutableListOf<Job>())
+            }) { tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }.forEach { it.join() }
         } else {
             val info = instruments[code]
             if (info != null && info.type == SecurityType.FUTURES && code !in commissionRateQueriedCodes) {
@@ -706,11 +694,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     instrumentID = insId
                 }
                 val requestId = nextRequestId()
-                runWithResultCheck<List<Job>>({ tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }, {
-                    suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                        requestMap[requestId] = RequestContinuation(requestId, continuation, tag = code, data = mutableListOf<Job>())
-                    }
-                }).forEach { it.join() }
+                suspendWithRequest<List<Job>>(requestId, requestMap, config.timeout, { continuation ->
+                    RequestContinuation(requestId, continuation, tag = code, data = mutableListOf<Job>())
+                }) { tdApi.ReqQryInstrumentCommissionRate(qryField, requestId) }.forEach { it.join() }
             }
         }
     }
@@ -726,11 +712,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
 //            instrumentID = parseCode(code).second
 //        }
 //        val requestId = nextRequestId()
-//        runWithResultCheck<Unit>({ tdApi.ReqQryInstrumentOrderCommRate(qryField, requestId) }, {
-//            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-//                requestMap[requestId] = RequestContinuation(requestId, continuation)
-//            }
-//        })
+//        suspendWithRequest<Unit>(requestId, requestMap, config.timeout) {
+//            tdApi.ReqQryInstrumentOrderCommRate(qryField, requestId)
+//        }
 //    }
 
     /**
@@ -744,11 +728,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 investorID = config.investorId
             }
             val requestId = nextRequestId()
-            runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrCommRate(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation)
-                }
-            })
+            suspendWithRequest<Unit>(requestId, requestMap, config.timeout) {
+                tdApi.ReqQryOptionInstrCommRate(qryField, requestId)
+            }
         } else {
             val instrument = instruments[code]
             if (instrument != null && instrument.type == SecurityType.OPTIONS && code !in commissionRateQueriedCodes) {
@@ -760,11 +742,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     instrumentID = insId
                 }
                 val requestId = nextRequestId()
-                runWithResultCheck<Unit>({ tdApi.ReqQryOptionInstrCommRate(qryField, requestId) }, {
-                    suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                        requestMap[requestId] = RequestContinuation(requestId, continuation)
-                    }
-                })
+                suspendWithRequest<Unit>(requestId, requestMap, config.timeout) {
+                    tdApi.ReqQryOptionInstrCommRate(qryField, requestId)
+                }
             }
         }
     }
@@ -787,11 +767,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 instrumentID = parseCode(code).second
             }
             val requestId = nextRequestId()
-            resultTick = runWithResultCheck({ tdApi.ReqQryDepthMarketData(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, data = code)
-                }
-            })
+            resultTick = suspendWithRequest(requestId, requestMap, config.timeout, {continuation ->
+                RequestContinuation(requestId, continuation, data = code)
+            }) { tdApi.ReqQryDepthMarketData(qryField, requestId) }
         }
         if (resultTick != null) {
             val info = instruments[code]
@@ -864,11 +842,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             instrumentID = instrumentId
         }
         val requestId = nextRequestId()
-        return runWithResultCheck({ tdApi.ReqQryInstrument(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = code)
-            }
-        })
+        return suspendWithRequest(requestId, requestMap, config.timeout, { continuation ->
+            RequestContinuation(requestId, continuation, data = code)
+        }) { tdApi.ReqQryInstrument(qryField, requestId) }
     }
 
     /**
@@ -887,11 +863,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         }
         val qryField = CThostFtdcQryInstrumentField()
         val requestId = nextRequestId()
-        return runWithResultCheck({ tdApi.ReqQryInstrument(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = mutableListOf<SecurityInfo>())
-            }
-        })
+        return suspendWithRequest(requestId, requestMap, config.timeout * 3, { continuation ->
+            RequestContinuation(requestId, continuation, data = mutableListOf<SecurityInfo>())
+        }) { tdApi.ReqQryInstrument(qryField, requestId) }
     }
 
     /**
@@ -995,11 +969,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             investorID = config.investorId
         }
         val requestId = nextRequestId()
-        return runWithResultCheck<Order?>({ tdApi.ReqQryOrder(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryOrdersData(orderId))
-            }
-        })?.apply {
+        return suspendWithRequest<Order?>(requestId, requestMap, config.timeout, {continuation ->
+            RequestContinuation(requestId, continuation, data = QueryOrdersData(orderId))
+        }) { tdApi.ReqQryOrder(qryField, requestId) }?.apply {
             ensureFullSecurityInfo(code)
             getOrQueryTick(code).first?.calculateOrderFrozenCash(this)
         }
@@ -1031,11 +1003,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 }
             }
             val requestId = nextRequestId()
-            runWithResultCheck({ tdApi.ReqQryOrder(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryOrdersData(null, code, onlyUnfinished))
-                }
-            })
+            suspendWithRequest(requestId, requestMap, config.timeout * 3, {continuation ->
+                RequestContinuation(requestId, continuation, data = QueryOrdersData(null, code, onlyUnfinished))
+            }) { tdApi.ReqQryOrder(qryField, requestId) }
         }
         return results.onEach {
             if (it.offset == OrderOffset.OPEN && it.volume > it.filledVolume) {
@@ -1059,11 +1029,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             tradeID = tradeId.split("_").first()
         }
         val requestId = nextRequestId()
-        return runWithResultCheck<Trade?>({ tdApi.ReqQryTrade(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryTradesData(tradeId))
-            }
-        })?.apply {
+        return suspendWithRequest<Trade?>(requestId, requestMap, config.timeout, { continuation ->
+            RequestContinuation(requestId, continuation, data = QueryTradesData(tradeId))
+        }) { tdApi.ReqQryTrade(qryField, requestId) }?.apply {
             ensureFullSecurityInfo(code)
             getOrQueryTick(code).first?.calculateTrade(this)
         }
@@ -1099,11 +1067,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 }
             }
             val requestId = nextRequestId()
-            return runWithResultCheck<List<Trade>>({ tdApi.ReqQryTrade(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, data = reqData)
-                }
-            }).onEach {
+            return suspendWithRequest<List<Trade>>(requestId, requestMap, config.timeout * 3, { continuation ->
+                RequestContinuation(requestId, continuation, data = reqData)
+            }) { tdApi.ReqQryTrade(qryField, requestId) }.onEach {
                 ensureFullSecurityInfo(it.code)
                 getOrQueryTick(it.code).first?.calculateTrade(it)
             }
@@ -1120,11 +1086,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             currencyID = "CNY"
         }
         val requestId = nextRequestId()
-        val assets = runWithResultCheck<Assets>({ tdApi.ReqQryTradingAccount(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation)
-            }
-        })
+        val assets = suspendWithRequest<Assets>(requestId, requestMap, config.timeout) {
+            tdApi.ReqQryTradingAccount(qryField, requestId)
+        }
         // 计算持仓盈亏
         assets.positionPnl = 0.0
         positions.forEach { (code, bi) ->
@@ -1170,11 +1134,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 instrumentID = parseCode(code).second
             }
             val requestId = nextRequestId()
-            runWithResultCheck({ tdApi.ReqQryInvestorPosition(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, tag = direction.name, data = mutableListOf<Position>())
-                }
-            })
+            suspendWithRequest(requestId, requestMap, config.timeout, {continuation ->
+                RequestContinuation(requestId, continuation, tag = direction.name, data = mutableListOf<Position>())
+            }) { tdApi.ReqQryInvestorPosition(qryField, requestId) }
         }
     }
 
@@ -1216,11 +1178,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 if (!code.isNullOrEmpty()) instrumentID = parseCode(code).second
             }
             val requestId = nextRequestId()
-            return runWithResultCheck<List<Position>>({ tdApi.ReqQryInvestorPosition(qryField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout * 3) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, tag = code ?: "", data = mutableListOf<Position>())
-                }
-            }).onEach {
+            return suspendWithRequest<List<Position>>(requestId, requestMap, config.timeout * 3, { continuation ->
+                RequestContinuation(requestId, continuation, tag = code ?: "", data = mutableListOf<Position>())
+            }) { tdApi.ReqQryInvestorPosition(qryField, requestId) }.onEach {
                 if (it.code.contains(' ')) return@onEach
                 val lastTick = getOrQueryTick(it.code).first
                 lastTick?.calculatePosition(it, calculateValue = false)
@@ -1238,11 +1198,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             instrumentID = parseCode(code).second
         }
         val requestId = nextRequestId()
-        return runWithResultCheck({ tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code, direction))
-            }
-        })
+        return suspendWithRequest(requestId, requestMap, config.timeout, { continuation ->
+            RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code, direction))
+        }) { tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }
     }
 
     /**
@@ -1254,11 +1212,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             investorID = config.investorId
         }
         val requestId = nextRequestId()
-        return runWithResultCheck({ tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }, {
-            suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code))
-            }
-        })
+        return suspendWithRequest(requestId, requestMap, config.timeout, { continuation ->
+            RequestContinuation(requestId, continuation, data = QueryPositionDetailsData(code))
+        }) { tdApi.ReqQryInvestorPositionDetail(qryField, requestId) }
     }
 
     /**
@@ -1283,11 +1239,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 brokerID = config.brokerId
             }
             val requestId = nextRequestId()
-            runWithResultCheck<Unit>({ tdApi.ReqAuthenticate(reqField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation)
-                }
-            })
+            suspendWithRequest<Unit>(requestId, requestMap, config.timeout) {
+                tdApi.ReqAuthenticate(reqField, requestId)
+            }
         }
 
         /**
@@ -1301,11 +1255,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 userProductInfo = config.userProductInfo
             }
             val requestId = nextRequestId()
-            runWithResultCheck<Unit>({ tdApi.ReqUserLogin(reqField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation)
-                }
-            })
+            suspendWithRequest<Unit>(requestId, requestMap, config.timeout) {
+                tdApi.ReqUserLogin(reqField, requestId)
+            }
         }
 
         /**
@@ -1317,11 +1269,9 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 brokerID = config.brokerId
             }
             val requestId = nextRequestId()
-            runWithResultCheck<Unit>({ tdApi.ReqSettlementInfoConfirm(reqField, requestId) }, {
-                suspendCoroutineWithTimeout(config.timeout) { continuation ->
-                    requestMap[requestId] = RequestContinuation(requestId, continuation)
-                }
-            })
+            suspendWithRequest<Unit>(requestId, requestMap, config.timeout) {
+                tdApi.ReqSettlementInfoConfirm(reqField, requestId)
+            }
         }
 
         /**

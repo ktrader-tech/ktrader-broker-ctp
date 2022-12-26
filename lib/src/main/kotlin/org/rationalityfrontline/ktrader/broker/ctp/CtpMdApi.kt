@@ -7,7 +7,6 @@ import kotlinx.coroutines.runBlocking
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.ktrader.api.broker.BrokerEventType
 import org.rationalityfrontline.ktrader.api.broker.LogLevel
-import org.rationalityfrontline.ktrader.api.datatype.MarketStatus
 import org.rationalityfrontline.ktrader.api.datatype.SecurityInfo
 import org.rationalityfrontline.ktrader.api.datatype.SecurityType
 import org.rationalityfrontline.ktrader.api.datatype.Tick
@@ -179,12 +178,10 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                 instrumentId
             }.toTypedArray()
             val requestId = nextRequestId()
-            runWithResultCheck({ mdApi.SubscribeMarketData(rawCodes) }, {
-                suspendCoroutineWithTimeout<Unit>(config.timeout) { continuation ->
-                    // data 为订阅的 instrumentId 可变集合，在 CtpMdSpi.OnRspSubMarketData 中每收到一条合约订阅成功回报，就将该 instrumentId 从该可变集合中移除。当集合为空时，表明请求完成
-                    requestMap[requestId] = RequestContinuation(requestId, continuation, "subscribeMarketData", rawCodes.toMutableSet())
-                }
-            })
+            suspendWithRequest<Unit>(requestId, requestMap, config.timeout, { continuation ->
+                // data 为订阅的 instrumentId 可变集合，在 CtpMdSpi.OnRspSubMarketData 中每收到一条合约订阅成功回报，就将该 instrumentId 从该可变集合中移除。当集合为空时，表明请求完成
+                RequestContinuation(requestId, continuation, "subscribeMarketData", rawCodes.toMutableSet())
+            }) { mdApi.SubscribeMarketData(rawCodes) }
             return filteredCodes.mapNotNull {
                 tdApi.instruments[it]?.apply {
                     if (ensureFullInfo) tdApi.ensureFullSecurityInfo(it)
@@ -206,11 +203,9 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
         if (filteredCodes.isEmpty()) return
         val rawCodes = filteredCodes.map { parseCode(it).second }.toTypedArray()
         val requestId = nextRequestId()
-        runWithResultCheck({ mdApi.UnSubscribeMarketData(rawCodes) }, {
-            suspendCoroutineWithTimeout<Unit>(config.timeout) { continuation ->
-                requestMap[requestId] = RequestContinuation(requestId, continuation, "unsubscribeMarketData", rawCodes.toMutableSet())
-            }
-        })
+        suspendWithRequest<Unit>(requestId, requestMap, config.timeout, { continuation ->
+            RequestContinuation(requestId, continuation, "unsubscribeMarketData", rawCodes.toMutableSet())
+        }) { mdApi.UnSubscribeMarketData(rawCodes) }
     }
 
     /**

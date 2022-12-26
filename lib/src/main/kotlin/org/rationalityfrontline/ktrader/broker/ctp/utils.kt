@@ -1,12 +1,10 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
-import kotlinx.coroutines.CancellableContinuation
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.*
 import org.rationalityfrontline.jctp.CThostFtdcRspInfoField
 import org.rationalityfrontline.ktrader.api.datatype.*
 import kotlin.coroutines.Continuation
+import kotlin.coroutines.resumeWithException
 
 /**
  * 验证 code 是否规范，并解析返回其交易所代码和合约代码（[Pair.first] 为 exchangeId，[Pair.second] 为 instrumentId）
@@ -93,11 +91,35 @@ internal suspend fun <T> runWithRetry(action: suspend () -> T, onError: (Excepti
 }
 
 /**
- * [withTimeout] 与 [suspendCancellableCoroutine] 的结合简写
+ * 用 CTP 网络请求 [request] 挂起当前协程直到请求成功或失败。首先一个新建的 [RequestContinuation] 会被添加进 [requestMap] 中（key 为 [requestId]），
+ * 当请求执行成功时需要自行在 CTP 回调方法中 resume 该 [RequestContinuation]，当请求执行失败时会自动调用 resumeWithException。
+ *
+ * @param requestId 请求 ID
+ * @param requestMap 请求 Map
+ * @param timeout 超时时间，单位为毫秒（ms）
+ * @param continuationFun 用 [Continuation] 生成 [RequestContinuation] 的方法。默认为 null，表示采用 `RequestContinuation(requestId, continuation)` 的方式生成。
+ * @param request CTP 网络请求
  */
-internal suspend inline fun <T> suspendCoroutineWithTimeout(timeMills: Long, crossinline block: (CancellableContinuation<T>) -> Unit): T {
-    return withTimeout(timeMills) {
-        suspendCancellableCoroutine(block)
+internal suspend fun <T> suspendWithRequest(
+    requestId: Int,
+    requestMap: MutableMap<Int, RequestContinuation>,
+    timeout: Long,
+    continuationFun: ((Continuation<T>) -> RequestContinuation)? = null,
+    request: () -> Int,
+): T {
+    return withTimeout(timeout) {
+        suspendCancellableCoroutine { continuation ->
+            requestMap[requestId] = continuationFun?.invoke(continuation) ?: RequestContinuation(requestId, continuation)
+            var resultCode = request()
+            while (resultCode == -2 || resultCode == -3) {
+                runBlocking { delay(10) }
+                resultCode = request()
+            }
+            if (resultCode != 0) {
+                continuation.resumeWithException(Exception("${getErrorInfo(resultCode)} ($resultCode)"))
+                requestMap.remove(requestId)
+            }
+        }
     }
 }
 
