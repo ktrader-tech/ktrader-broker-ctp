@@ -35,7 +35,7 @@ dependencies {
     compileOnly(kotlin("stdlib"))
     compileOnly("org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires")
     compileOnly("org.rationalityfrontline.ktrader:ktrader-utils:0.1.0")
-    val jctp = if (asTest) "org.rationalityfrontline:jctp:6.6.1_P1_CP-1.0.4" else "org.rationalityfrontline:jctp:6.6.1_P1-1.0.4"
+    val jctp = if (asTest) "org.rationalityfrontline:jctp:6.6.9_CP-1.0.5" else "org.rationalityfrontline:jctp:6.6.9-1.0.5"
     implementation(jctp) { exclude(group = "org.slf4j", module = "slf4j-api") }
 }
 

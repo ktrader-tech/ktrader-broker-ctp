@@ -7,7 +7,7 @@
 [KTrader-API](https://github.com/ktrader-tech/ktrader-api) 中 BrokerApi 接口的 CTP 实现。
 
 对底层 CTP 的调用使用了 CTP 的 Java 封装 [JCTP](https://github.com/ktrader-tech/jctp) ，支持 64 位的 Windows 及 Linux 操作系统。
-默认使用的 JCTP 版本为 `6.6.1_P1-1.0.4`，如果需要更换为其它版本，请参考 [Download](#download) 部分。
+默认使用的 JCTP 版本为 `6.6.9-1.0.5`，如果需要更换为其它版本，请参考 [Download](#download) 部分。
 
 ## 功能特性
 众所周知，CTP 使用繁琐（如登录流程）且存在很多的坑，但本框架封装后暴露给终端用户的接口是简洁且统一的
@@ -157,7 +157,7 @@ JCTP jar 下载地址：[Maven Repository](https://repo1.maven.org/maven2/org/ra
 KTrader-Broker-CTP is released under the [Apache 2.0 license](https://github.com/ktrader-tech/ktrader-broker-ctp/blob/master/LICENSE).
 
 ```
-Copyright 2022 RationalityFrontline
+Copyright 2022-2023 RationalityFrontline
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
