@@ -90,7 +90,18 @@ internal object Converter {
         onTimeParseError: (Exception) -> Unit,
     ): Tick {
         val updateTime = try {
-            LocalTime.parse("${tickField.updateTime}.${tickField.updateMillisec.toString().padStart(3, '0')}").atDate(LocalDate.now())
+            val time = LocalTime.parse("${tickField.updateTime}.${tickField.updateMillisec.toString().padStart(3, '0')}")
+            //对于原油等跨夜品种，使用本地日期会导致将 23 点末以及 0 点初的 Tick 赋予错误日期的问题（时差问题），因此需要根据 lastTick 来严格判断日期
+            val date = if (lastTick != null) {
+                if (time.hour == 23 && time.minute > 55) {
+                    lastTick.time.toLocalDate()
+                } else if (time.hour == 0 && time.minute < 5) {
+                    if (lastTick.time.hour == 23) lastTick.time.toLocalDate().plusDays(1) else lastTick.time.toLocalDate()
+                } else {
+                    LocalDate.now()
+                }
+            } else LocalDate.now()
+            time.atDate(date)
         } catch (e: Exception) {
             if ("${tickField.updateTime}.${tickField.updateMillisec}" != ".0") {  // 当 CtpTdApi 在夜市时段查询股指期权时出现的特殊情况
                 onTimeParseError(e)
