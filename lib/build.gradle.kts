@@ -4,14 +4,14 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.time.LocalDateTime
 
 plugins {
-    kotlin("jvm") version "1.7.21"
-    kotlin("kapt") version "1.7.21"
+    kotlin("jvm") version "1.8.20"
+    kotlin("kapt") version "1.8.20"
     `java-library`
     id("org.javamodularity.moduleplugin") version "1.8.12"
 }
 
 group = "org.rationalityfrontline.ktrader"
-version = "1.3.3"
+version = "1.3.4"
 val NAME = "ktrader-broker-ctp"
 val DESC = "KTrader-API 中 Broker 接口的 CTP 实现"
 val GITHUB_REPO = "ktrader-tech/ktrader-broker-ctp"
@@ -20,7 +20,7 @@ val asTest = false  // 是否编译为仿真评测版本
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = if (asTest) "KTB-CTP-CP" else "KTB-CTP"
 val pluginVersion = version as String
-val pluginRequires = "0.4.0"
+val pluginRequires = "0.4.1"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"
@@ -31,10 +31,10 @@ repositories {
 }
 
 dependencies {
-    kapt("org.pf4j:pf4j:3.8.0")
+    kapt("org.pf4j:pf4j:3.9.0")
     compileOnly(kotlin("stdlib"))
     compileOnly("org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires")
-    compileOnly("org.rationalityfrontline.ktrader:ktrader-utils:0.1.0")
+    compileOnly("org.rationalityfrontline.ktrader:ktrader-utils:0.1.1")
     val jctp = if (asTest) "org.rationalityfrontline:jctp:6.6.9_CP-1.0.5" else "org.rationalityfrontline:jctp:6.6.9-1.0.5"
     implementation(jctp) { exclude(group = "org.slf4j", module = "slf4j-api") }
 }
