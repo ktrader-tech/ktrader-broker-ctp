@@ -10,7 +10,7 @@ object CtpBrokerInfo: ApiInfo {
 
     override val name: String = "CTP"
 
-    override val version: String = "${BuildInfo.VERSION}-${CThostFtdcTraderApi.GetApiVersion()}"
+    override val version: String = "${BuildInfo.VERSION}-${CThostFtdcTraderApi.GetApiVersion().trimEnd()}"
 
     override val author: String = "RationalityFrontline"
 
