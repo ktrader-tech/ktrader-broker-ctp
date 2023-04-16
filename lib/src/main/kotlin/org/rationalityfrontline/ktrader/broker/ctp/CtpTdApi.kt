@@ -2,10 +2,14 @@
 
 package org.rationalityfrontline.ktrader.broker.ctp
 
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.rationalityfrontline.jctp.*
 import org.rationalityfrontline.jctp.jctpConstants.*
-import org.rationalityfrontline.ktrader.api.broker.*
+import org.rationalityfrontline.ktrader.api.broker.BrokerEventType
+import org.rationalityfrontline.ktrader.api.broker.CustomEvent
+import org.rationalityfrontline.ktrader.api.broker.LogLevel
 import org.rationalityfrontline.ktrader.api.datatype.*
 import org.rationalityfrontline.ktrader.utils.broker.*
 import java.io.File
@@ -1314,14 +1318,14 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                             }
                             ticks.forEach { tick ->
                                 // 仅当状态推送比 Tick 推送先到达时进行纯状态 Tick 补发检查
-                                if (tick.status != marketStatus && !tick.time.isAfter(enterTime)) {
+                                if (tick.status != marketStatus && tick.time <= enterTime) {
                                     if (marketStatus == MarketStatus.AUCTION_ORDERING || marketStatus == MarketStatus.CONTINUOUS_MATCHING) {  // 如果是开始信号，立即推送
                                         pushStatusTick(tick)
                                     } else {  // 如果不是开始信号， 等待一会儿后再检查以避免错过对应状态的 Tick
                                         launch delayedCheck@{
                                             delay(config.statusTickDelay)
                                             val lastTick = mdApi.lastTicks[tick.code] ?: return@delayedCheck
-                                            if (lastTick.status != marketStatus && !lastTick.time.isAfter(enterTime)) {
+                                            if (lastTick.status != marketStatus && lastTick.time <= enterTime) {
                                                 pushStatusTick(lastTick)
                                             }
                                         }
@@ -2412,7 +2416,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     }
                     val openDate = Converter.dateC2A(pInvestorPositionDetail.openDate)
                     detail.volume += pInvestorPositionDetail.volume
-                    if (detail.tradingDay.isBefore(openDate)) {
+                    if (detail.tradingDay < openDate) {
                         detail.tradingDay = openDate
                     }
                     if (pInvestorPositionDetail.openDate == tradingDay) {

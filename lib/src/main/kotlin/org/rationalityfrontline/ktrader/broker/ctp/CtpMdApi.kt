@@ -403,7 +403,7 @@ internal class CtpMdApi(val api: CtpBrokerApi) {
                 info?.productId?.let { productID -> tdApi.productStatusMap[productID]?.let { newTick.status = it } }
             } else {
                 // 暂停/停止交易时，常发生最后几个 Tick 延时推送的现象，而此时纯状态 Tick 可能已推送，因而造成 Tick 时间非递增，此时需要修改延时 Tick 的时间和状态
-                if (newTick.status != lastTick.status && newTick.time.isBefore(lastTick.time)) {
+                if (newTick.status != lastTick.status && newTick.time < lastTick.time) {
                     newTick.extras = (newTick.extras ?: mutableMapOf()).apply {
                         put("originalTime", newTick.time.toString())
                         put("originalStatus", newTick.status.name)

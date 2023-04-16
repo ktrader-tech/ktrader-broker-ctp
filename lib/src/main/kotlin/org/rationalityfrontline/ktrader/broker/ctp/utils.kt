@@ -340,7 +340,7 @@ private val CFFEX_TRADING_HOURS = setOf(9, 10, 11, 13, 14, 15)
 fun getTickStatus(tick: Tick, exchangeID: String): MarketStatus {
     fun reviseTickTime(hour: Int, minute: Int) {  // 对所有状态为 AUCTION_MATCHED/STOP_TRADING/CLOSED 的 Tick 进行时间修正
         val revisedTime = tick.time.toLocalDate().atTime(hour, minute)
-        if (!revisedTime.isEqual(tick.time)) {
+        if (revisedTime != tick.time) {
             tick.extras = (tick.extras ?: mutableMapOf()).apply { getOrPut("originalTime") { tick.time.toString() } }
             tick.time = revisedTime
         }

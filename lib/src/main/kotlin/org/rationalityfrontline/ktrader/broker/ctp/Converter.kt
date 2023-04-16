@@ -141,7 +141,7 @@ internal object Converter {
                 optionsDelta = tickField.currDelta
             }
             status = getTickStatus(this, exchangeID)
-            if (status.isStopOrClosed() && time.isAfter(LocalDateTime.now().plusMinutes(10))) {  // 非实时推送的 Tick 的日期可能不是当前日期，需要进行判断
+            if (status.isStopOrClosed() && time > LocalDateTime.now().plusMinutes(10)) {  // 非实时推送的 Tick 的日期可能不是当前日期，需要进行判断
                 val minusDays = if (updateTime.dayOfWeek == DayOfWeek.MONDAY) 3L else 1L
                 time = time.minusDays(minusDays)
             }
