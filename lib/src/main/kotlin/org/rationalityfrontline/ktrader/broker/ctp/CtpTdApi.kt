@@ -2624,7 +2624,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
         }
 
         /**
-         * 期货保证金率查询请求响应，会自动更新 [instruments] 中对应的保证金率信息
+         * 期权保证金率查询请求响应，会自动更新 [instruments] 中对应的保证金率信息
          */
         override fun OnRspQryOptionInstrTradeCost(
             pOptionMargin: CThostFtdcOptionInstrTradeCostField?,
