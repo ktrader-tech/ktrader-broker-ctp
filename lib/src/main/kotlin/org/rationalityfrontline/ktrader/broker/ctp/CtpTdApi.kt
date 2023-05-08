@@ -447,7 +447,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
             todayOrders[orderRef] = order
             api.scope.launch {
                 delay(1)
-                api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
+                api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
             }
         }
         return order
@@ -1727,7 +1727,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     updateTime = LocalDateTime.now()
                 }
                 removeUnfinishedOrder(order)
-                api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
+                api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
             })
         }
 
@@ -1908,7 +1908,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                     order.updateTime = updateTime
                 }
                 if (oldStatus != newOrderStatus) {
-                    api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
+                    api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
                 }
             }
         }
@@ -2086,7 +2086,7 @@ internal class CtpTdApi(val api: CtpBrokerApi) {
                 } else {
                     lastTick.calculateOrderFrozenCash(order)
                 }
-                api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order)
+                api.postBrokerEvent(BrokerEventType.ORDER_STATUS, order.deepCopy())
             }
         }
 
