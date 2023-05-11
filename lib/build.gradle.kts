@@ -20,7 +20,7 @@ val asTest = false  // 是否编译为仿真评测版本
 val pluginClass = "org.rationalityfrontline.ktrader.broker.ctp.CtpBrokerPlugin"
 val pluginId = if (asTest) "KTB-CTP-CP" else "KTB-CTP"
 val pluginVersion = version as String
-val pluginRequires = "0.4.1"
+val pluginRequires = "0.4.2"
 val pluginDescription = DESC
 val pluginProvider = "RationalityFrontline"
 val pluginLicense = "Apache License 2.0"
@@ -34,7 +34,7 @@ dependencies {
     kapt("org.pf4j:pf4j:3.9.0")
     compileOnly(kotlin("stdlib"))
     compileOnly("org.rationalityfrontline.ktrader:ktrader-api:$pluginRequires")
-    compileOnly("org.rationalityfrontline.ktrader:ktrader-utils:0.1.3")
+    compileOnly("org.rationalityfrontline.ktrader:ktrader-utils:0.1.4")
     val jctp = if (asTest) "org.rationalityfrontline:jctp:6.6.9_CP-1.0.5" else "org.rationalityfrontline:jctp:6.6.9-1.0.5"
     implementation(jctp) { exclude(group = "org.slf4j", module = "slf4j-api") }
 }
