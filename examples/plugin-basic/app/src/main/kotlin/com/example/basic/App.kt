@@ -1,7 +1,7 @@
 package com.example.basic
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
-import mu.KotlinLogging
 import org.pf4j.DefaultPluginManager
 import org.pf4j.ExtensionFactory
 import org.pf4j.SingletonExtensionFactory

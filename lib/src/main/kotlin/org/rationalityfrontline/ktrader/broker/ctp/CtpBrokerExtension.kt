@@ -1,6 +1,6 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
-import mu.KLogger
+import io.github.oshai.kotlinlogging.KLogger
 import org.pf4j.Extension
 import org.rationalityfrontline.ktrader.api.ApiInfo
 import org.rationalityfrontline.ktrader.api.broker.BrokerApi

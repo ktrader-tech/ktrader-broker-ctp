@@ -1,7 +1,7 @@
 package org.rationalityfrontline.ktrader.broker.ctp
 
+import io.github.oshai.kotlinlogging.KLogger
 import kotlinx.coroutines.*
-import mu.KLogger
 import org.rationalityfrontline.kevent.EventDispatchMode
 import org.rationalityfrontline.kevent.KEvent
 import org.rationalityfrontline.kevent.SubscriberThreadMode
